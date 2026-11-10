@@ -11,7 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kyambuthia/kikapu/internal/cart"
 	"github.com/kyambuthia/kikapu/internal/catalog"
+	"github.com/kyambuthia/kikapu/internal/checkout"
+	"github.com/kyambuthia/kikapu/internal/inventory"
+	"github.com/kyambuthia/kikapu/internal/payment"
 	"github.com/kyambuthia/kikapu/internal/platform/config"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
@@ -82,9 +86,18 @@ func main() {
 	repo := catalog.NewInMemoryRepository(products)
 	catalogHandler := routes.NewCatalogHandler(repo)
 
+	cartStore := cart.NewInMemoryStore()
+	inventorySvc := inventory.NewService(inventory.RealClock{}, 5*time.Minute)
+	paymentProvider := payment.NewFakeProvider(payment.NoFailure)
+	idempotencyStore := checkout.NewIdempotencyStore()
+	checkoutSvc := checkout.NewService(cartStore, inventorySvc, paymentProvider, idempotencyStore)
+
+	cartHandler := routes.NewCartHandler(cartStore, checkoutSvc)
+
 	mux := http.NewServeMux()
 
 	catalogHandler.RegisterRoutes(mux)
+	cartHandler.RegisterRoutes(mux)
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
