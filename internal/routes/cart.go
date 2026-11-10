@@ -13,13 +13,13 @@ import (
 )
 
 type CartHandler struct {
-	store   cart.Store
+	store    cart.Store
 	checkout *checkout.Service
 }
 
 func NewCartHandler(store cart.Store, checkoutSvc *checkout.Service) *CartHandler {
 	return &CartHandler{
-		store:   store,
+		store:    store,
 		checkout: checkoutSvc,
 	}
 }
