@@ -51,21 +51,21 @@ func (rw *responseWriter) WriteHeader(code int) {
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		
+
 		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(rw, r)
-		
+
 		duration := time.Since(start)
 		requestID := RequestIDHeader(r)
-		
+
 		logEntry := map[string]interface{}{
 			"method":      r.Method,
 			"path":        r.URL.Path,
 			"status":      rw.statusCode,
-			"duration_ms":  duration.Milliseconds(),
+			"duration_ms": duration.Milliseconds(),
 			"request_id":  requestID,
 		}
-		
+
 		json.NewEncoder(rw).Encode(logEntry)
 	})
 }
