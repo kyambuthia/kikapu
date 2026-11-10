@@ -5,25 +5,13 @@ import (
 	"time"
 )
 
-type FakeClock struct {
-	current time.Time
-}
-
-func (f *FakeClock) Now() time.Time {
-	return f.current
-}
-
-func (f *FakeClock) Add(d time.Duration) {
-	f.current = f.current.Add(d)
-}
-
 func TestService_Reserve(t *testing.T) {
 	tests := []struct {
-		name          string
-		stock         int
-		quantity      int
-		wait         time.Duration
-		wantErr      error
+		name     string
+		stock    int
+		quantity int
+		wait     time.Duration
+		wantErr  error
 	}{
 		{
 			name:     "reserve successfully",
@@ -47,7 +35,7 @@ func TestService_Reserve(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			clock := &FakeClock{current: time.Now()}
+			clock := &FakeClock{Current: time.Now()}
 			svc := NewService(clock, 5*time.Minute)
 			svc.SetStock("var001", tt.stock)
 
@@ -73,7 +61,7 @@ func TestService_Reserve(t *testing.T) {
 }
 
 func TestService_Release(t *testing.T) {
-	clock := &FakeClock{current: time.Now()}
+	clock := &FakeClock{Current: time.Now()}
 	svc := NewService(clock, 5*time.Minute)
 	svc.SetStock("var001", 10)
 
@@ -99,7 +87,7 @@ func TestService_Release(t *testing.T) {
 }
 
 func TestService_ExpiredReservation(t *testing.T) {
-	clock := &FakeClock{current: time.Now()}
+	clock := &FakeClock{Current: time.Now()}
 	svc := NewService(clock, 5*time.Minute)
 	svc.SetStock("var001", 10)
 
@@ -127,7 +115,7 @@ func TestService_ExpiredReservation(t *testing.T) {
 }
 
 func TestService_CleanupExpired(t *testing.T) {
-	clock := &FakeClock{current: time.Now()}
+	clock := &FakeClock{Current: time.Now()}
 	svc := NewService(clock, 5*time.Minute)
 	svc.SetStock("var001", 10)
 

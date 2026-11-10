@@ -20,7 +20,7 @@ func TestService_PlaceOrder_DoubleSubmit(t *testing.T) {
 	inventorySvc.SetStock("var001", 10)
 
 	c := cart.NewCart("cart001", "USD")
-	c.AddItem("var001", 2, payment.money.NewAmount(1000, "USD"))
+	c.AddItem("var001", 2, money.NewAmount(1000, "USD"))
 	cartStore.Save(c)
 
 	svc := NewService(cartStore, inventorySvc, paymentProvider, idempotencyStore)
@@ -53,7 +53,7 @@ func TestService_PlaceOrder_Concurrent(t *testing.T) {
 	inventorySvc.SetStock("var001", 100)
 
 	c := cart.NewCart("cart001", "USD")
-	c.AddItem("var001", 2, payment.money.NewAmount(1000, "USD"))
+	c.AddItem("var001", 2, money.NewAmount(1000, "USD"))
 	cartStore.Save(c)
 
 	svc := NewService(cartStore, inventorySvc, paymentProvider, idempotencyStore)
@@ -96,7 +96,7 @@ func TestService_PlaceOrder_DeclinedPayment(t *testing.T) {
 	inventorySvc.SetStock("var001", 10)
 
 	c := cart.NewCart("cart001", "USD")
-	c.AddItem("var001", 2, payment.money.NewAmount(1000, "USD"))
+	c.AddItem("var001", 2, money.NewAmount(1000, "USD"))
 	cartStore.Save(c)
 
 	svc := NewService(cartStore, inventorySvc, paymentProvider, idempotencyStore)
@@ -120,8 +120,7 @@ func TestService_PlaceOrder_DeclinedPayment(t *testing.T) {
 		t.Error("Reservation should be released after declined payment")
 	}
 
-	inventorySvc.SetStock("var001", 0)
-	_, err = inventorySvc.Reserve("res_test", "var001", 1)
+	_, err = inventorySvc.Reserve("res_test", "var001", 10)
 	if err != nil {
 		t.Error("Stock should be available again after reservation release")
 	}
@@ -130,7 +129,7 @@ func TestService_PlaceOrder_DeclinedPayment(t *testing.T) {
 func TestService_PlaceOrder_ExpiredReservation(t *testing.T) {
 	clock := &inventory.FakeClock{Current: time.Now()}
 	inventorySvc := inventory.NewService(clock, 5*time.Minute)
-	
+
 	inventorySvc.SetStock("var001", 5)
 
 	res1, err := inventorySvc.Reserve("res001", "var001", 5)

@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrEmptyCart            = errors.New("cart is empty")
+	ErrEmptyCart             = errors.New("cart is empty")
 	ErrIdempotencyKeyMissing = errors.New("idempotency key is required")
 	ErrOrderNotFound         = errors.New("order not found")
 )
@@ -39,9 +39,9 @@ type Order struct {
 }
 
 type IdempotencyStore struct {
-	mu       sync.RWMutex
-	keys     map[string]string
-	orders   map[string]*Order
+	mu     sync.RWMutex
+	keys   map[string]string
+	orders map[string]*Order
 }
 
 func NewIdempotencyStore() *IdempotencyStore {
@@ -102,10 +102,10 @@ func (s *IdempotencyStore) GetOrder(id string) (*Order, error) {
 }
 
 type Service struct {
-	cartStore      cart.Store
-	inventorySvc   *inventory.Service
+	cartStore       cart.Store
+	inventorySvc    *inventory.Service
 	paymentProvider payment.Provider
-	idempotency    *IdempotencyStore
+	idempotency     *IdempotencyStore
 }
 
 func NewService(
@@ -115,10 +115,10 @@ func NewService(
 	idempotencyStore *IdempotencyStore,
 ) *Service {
 	return &Service{
-		cartStore:      cartStore,
-		inventorySvc:   inventorySvc,
+		cartStore:       cartStore,
+		inventorySvc:    inventorySvc,
 		paymentProvider: paymentProvider,
-		idempotency:    idempotencyStore,
+		idempotency:     idempotencyStore,
 	}
 }
 

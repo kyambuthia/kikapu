@@ -8,11 +8,11 @@ import (
 )
 
 var (
-	ErrInvalidQuantity     = errors.New("quantity must be between 1 and 99")
-	ErrCurrencyMismatch    = errors.New("currency mismatch")
-	ErrCartNotFound        = errors.New("cart not found")
-	ErrVersionMismatch     = errors.New("cart version mismatch")
-	ErrItemNotFound        = errors.New("item not found in cart")
+	ErrInvalidQuantity  = errors.New("quantity must be between 1 and 99")
+	ErrCurrencyMismatch = errors.New("currency mismatch")
+	ErrCartNotFound     = errors.New("cart not found")
+	ErrVersionMismatch  = errors.New("cart version mismatch")
+	ErrItemNotFound     = errors.New("item not found in cart")
 )
 
 type Line struct {

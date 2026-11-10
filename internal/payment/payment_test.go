@@ -2,6 +2,8 @@ package payment
 
 import (
 	"testing"
+
+	"github.com/kyambuthia/kikapu/internal/platform/money"
 )
 
 func TestState_CanTransitionTo(t *testing.T) {

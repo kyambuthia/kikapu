@@ -8,14 +8,14 @@ import (
 
 func TestCart_AddItem(t *testing.T) {
 	tests := []struct {
-		name       string
-		currency   string
-		variantID  string
-		quantity   int
-		unitPrice  money.Amount
-		wantErr    error
-		wantQty    int
-		wantLines  int
+		name      string
+		currency  string
+		variantID string
+		quantity  int
+		unitPrice money.Amount
+		wantErr   error
+		wantQty   int
+		wantLines int
 	}{
 		{
 			name:      "add new item",
@@ -192,10 +192,10 @@ func TestCart_Clear(t *testing.T) {
 
 func TestCart_Total(t *testing.T) {
 	tests := []struct {
-		name     string
-		lines    []Line
-		want     int64
-		wantErr  bool
+		name    string
+		lines   []Line
+		want    int64
+		wantErr bool
 	}{
 		{
 			name:  "empty cart",
