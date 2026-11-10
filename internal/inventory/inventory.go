@@ -7,9 +7,9 @@ import (
 )
 
 var (
-	ErrInsufficientStock    = errors.New("insufficient stock")
-	ErrReservationNotFound  = errors.New("reservation not found")
-	ErrReservationExpired   = errors.New("reservation expired")
+	ErrInsufficientStock   = errors.New("insufficient stock")
+	ErrReservationNotFound = errors.New("reservation not found")
+	ErrReservationExpired  = errors.New("reservation expired")
 )
 
 type Reservation struct {
@@ -30,19 +30,31 @@ func (RealClock) Now() time.Time {
 	return time.Now()
 }
 
+type FakeClock struct {
+	Current time.Time
+}
+
+func (f *FakeClock) Now() time.Time {
+	return f.Current
+}
+
+func (f *FakeClock) Add(d time.Duration) {
+	f.Current = f.Current.Add(d)
+}
+
 type Service struct {
-	mu            sync.RWMutex
-	stock         map[string]int
-	reservations  map[string]*Reservation
-	clock         Clock
+	mu             sync.RWMutex
+	stock          map[string]int
+	reservations   map[string]*Reservation
+	clock          Clock
 	reservationTTL time.Duration
 }
 
 func NewService(clock Clock, reservationTTL time.Duration) *Service {
 	return &Service{
-		stock:         make(map[string]int),
-		reservations:  make(map[string]*Reservation),
-		clock:        clock,
+		stock:          make(map[string]int),
+		reservations:   make(map[string]*Reservation),
+		clock:          clock,
 		reservationTTL: reservationTTL,
 	}
 }

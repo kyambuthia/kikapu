@@ -12,11 +12,11 @@ import (
 type State string
 
 const (
-	StatePending   State = "pending"
+	StatePending    State = "pending"
 	StateAuthorized State = "authorized"
-	StateCaptured  State = "captured"
-	StateFailed    State = "failed"
-	StateRefunded  State = "refunded"
+	StateCaptured   State = "captured"
+	StateFailed     State = "failed"
+	StateRefunded   State = "refunded"
 )
 
 var (
@@ -26,11 +26,11 @@ var (
 )
 
 var validTransitions = map[State][]State{
-	StatePending:   {StateAuthorized, StateFailed},
+	StatePending:    {StateAuthorized, StateFailed},
 	StateAuthorized: {StateCaptured, StateRefunded, StateFailed},
-	StateCaptured:  {StateRefunded},
-	StateFailed:    {},
-	StateRefunded:  {},
+	StateCaptured:   {StateRefunded},
+	StateFailed:     {},
+	StateRefunded:   {},
 }
 
 func (s State) CanTransitionTo(target State) bool {
@@ -75,9 +75,9 @@ type Provider interface {
 type FailureMode string
 
 const (
-	NoFailure       FailureMode = ""
-	Declined        FailureMode = "declined"
-	Timeout         FailureMode = "timeout"
+	NoFailure         FailureMode = ""
+	Declined          FailureMode = "declined"
+	Timeout           FailureMode = "timeout"
 	DuplicateCallback FailureMode = "duplicate-callback"
 )
 
