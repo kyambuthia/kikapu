@@ -77,13 +77,20 @@ Configuration is environment-based:
 
 ## API Endpoints
 
-| Method | Path | Description |
+ | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/healthz` | Health check - returns `{"status":"ok"}` |
 | GET | `/readyz` | Readiness check - returns 200 |
 | GET | `/v1/version` | Version info - returns version and commit |
 | GET | `/v1/products` | List products with pagination |
 | GET | `/v1/products/{slug}` | Get a single product by slug |
+| POST | `/v1/carts` | Create a new cart |
+| GET | `/v1/carts/{id}` | Get a cart by ID |
+| DELETE | `/v1/carts/{id}` | Delete (clear) a cart |
+| POST | `/v1/carts/{id}/items` | Add an item to cart |
+| PATCH | `/v1/carts/{id}/items/{variantID}` | Update item quantity |
+| DELETE | `/v1/carts/{id}/items/{variantID}` | Remove item from cart |
+| POST | `/v1/checkout` | Place an order (requires Idempotency-Key header) |
 
 ## Products API Examples
 
@@ -172,9 +179,132 @@ All errors follow the standard error envelope format:
     "message": "product not found"
   }
 }
+ ```
+ 
+## Cart API Examples
+
+### Create a Cart
+
+```bash
+curl -X POST http://localhost:8080/v1/carts \
+  -H "Content-Type: application/json" \
+  -d '{"currency": "USD"}'
 ```
 
-## Development
+Response:
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "currency": "USD",
+  "lines": [],
+  "version": 1,
+  "updated_at": "2024-01-15T10:30:00Z"
+}
+```
+
+### Add an Item to Cart
+
+```bash
+curl -X POST http://localhost:8080/v1/carts/{cart_id}/items \
+  -H "Content-Type: application/json" \
+  -d '{"variant_id": "var001", "quantity": 2, "unit_price": 2999}'
+```
+
+Response:
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "currency": "USD",
+  "lines": [
+    {
+      "variant_id": "var001",
+      "quantity": 2,
+      "unit_price": {"value": 2999, "currency": "USD"}
+    }
+  ],
+  "version": 2,
+  "updated_at": "2024-01-15T10:31:00Z"
+}
+```
+
+### Update Item Quantity
+
+```bash
+curl -X PATCH http://localhost:8080/v1/carts/{cart_id}/items/var001 \
+  -H "Content-Type: application/json" \
+  -d '{"quantity": 5}'
+```
+
+### Remove an Item
+
+```bash
+curl -X DELETE http://localhost:8080/v1/carts/{cart_id}/items/var001
+```
+
+### Delete Cart
+
+```bash
+curl -X DELETE http://localhost:8080/v1/carts/{cart_id}
+```
+
+## Checkout API Example
+
+### Place an Order (with Idempotency)
+
+The checkout endpoint requires an `Idempotency-Key` header to ensure idempotent operations. Submitting the same key multiple times will return the same order without creating duplicates.
+
+```bash
+curl -X POST http://localhost:8080/v1/checkout \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-request-key-12345" \
+  -d '{"cart_id": "550e8400-e29b-41d4-a716-446655440000"}'
+```
+
+Response:
+```json
+{
+  "order_id": "ord_1705315200",
+  "status": "paid"
+}
+ ```
+
+#### Idempotency Behavior
+
+- Same `Idempotency-Key` + same cart → same order returned
+- Concurrent requests with same key → guaranteed single order creation
+- Idempotency prevents duplicate charges even under concurrent access
+- Cart is cleared after successful order
+
+#### Error Cases
+
+**Missing Idempotency-Key:**
+```bash
+curl -X POST http://localhost:8080/v1/checkout \
+  -H "Content-Type: application/json" \
+  -d '{"cart_id": "550e8400-e29b-41d4-a716-446655440000"}'
+```
+
+Response (400 Bad Request):
+```json
+{
+  "error": {
+    "code": "missing_idempotency_key",
+    "message": "Idempotency-Key header is required"
+  }
+}
+```
+
+**Empty Cart:**
+```json
+{
+  "error": {
+    "code": "empty_cart",
+    "message": "cart is empty"
+  }
+}
+```
+
+ ## Development
 
 ### Code Quality
 
