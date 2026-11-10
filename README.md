@@ -82,6 +82,97 @@ Configuration is environment-based:
 | GET | `/healthz` | Health check - returns `{"status":"ok"}` |
 | GET | `/readyz` | Readiness check - returns 200 |
 | GET | `/v1/version` | Version info - returns version and commit |
+| GET | `/v1/products` | List products with pagination |
+| GET | `/v1/products/{slug}` | Get a single product by slug |
+
+## Products API Examples
+
+### List Products
+
+List products with default pagination (20 items per page):
+
+```bash
+curl http://localhost:8080/v1/products
+```
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "prod001",
+      "slug": "wireless-mouse",
+      "name": "Wireless Mouse",
+      "status": "published",
+      "variants": [
+        {"id": "var001", "sku": "WM-BLK-001", "price": {"value": 2999, "currency": "USD"}, "currency": "USD"},
+        {"id": "var002", "sku": "WM-WHT-001", "price": {"value": 3499, "currency": "USD"}, "currency": "USD"}
+      ]
+    }
+  ],
+  "next_cursor": "eyJyYW5kb20I6Imxhc3RfaWQifQ=="
+}
+```
+
+### Pagination
+
+Use `limit` parameter (default: 20, max: 100):
+
+```bash
+curl "http://localhost:8080/v1/products?limit=10"
+```
+
+Use `cursor` parameter for pagination:
+
+```bash
+curl "http://localhost:8080/v1/products?limit=10&cursor=eyJyYW5kb20I6Imxhc3RfaWQifQ=="
+```
+
+### Sparse Fieldsets
+
+Request specific fields only:
+
+```bash
+curl "http://localhost:8080/v1/products?fields=id,name"
+```
+
+Request variant fields:
+
+```bash
+curl "http://localhost:8080/v1/products?fields=id,variants.sku"
+```
+
+### Get a Single Product
+
+```bash
+curl http://localhost:8080/v1/products/wireless-mouse
+```
+
+Response:
+```json
+{
+  "id": "prod001",
+  "slug": "wireless-mouse",
+  "name": "Wireless Mouse",
+  "status": "published",
+  "variants": [
+    {"id": "var001", "sku": "WM-BLK-001", "price": {"value": 2999, "currency": "USD"}, "currency": "USD"}
+  ]
+}
+```
+
+### Error Responses
+
+All errors follow the standard error envelope format:
+
+```json
+{
+  "error": {
+    "code": "product_not_found",
+    "message": "product not found"
+  }
+}
+```
 
 ## Development
 

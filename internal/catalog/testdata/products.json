@@ -1,0 +1,248 @@
+[
+  {
+    "id": "prod001",
+    "slug": "wireless-mouse",
+    "name": "Wireless Mouse",
+    "status": "published",
+    "variants": [
+      {"id": "var001", "sku": "WM-BLK-001", "price": {"value": 2999, "currency": "USD"}, "currency": "USD"},
+      {"id": "var002", "sku": "WM-WHT-001", "price": {"value": 3499, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod002",
+    "slug": "mechanical-keyboard",
+    "name": "Mechanical Keyboard",
+    "status": "published",
+    "variants": [
+      {"id": "var003", "sku": "MK-BRN-001", "price": {"value": 8999, "currency": "USD"}, "currency": "USD"},
+      {"id": "var004", "sku": "MK-BLU-001", "price": {"value": 9499, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod003",
+    "slug": "hd-monitor-27-inch",
+    "name": "HD Monitor 27 Inch",
+    "status": "published",
+    "variants": [
+      {"id": "var005", "sku": "HM-27-001", "price": {"value": 24999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod004",
+    "slug": "laptop-stand-adjustable",
+    "name": "Laptop Stand Adjustable",
+    "status": "published",
+    "variants": [
+      {"id": "var006", "sku": "LS-ADJ-001", "price": {"value": 4999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod005",
+    "slug": "usb-c-hub-7-port",
+    "name": "USB-C Hub 7-Port",
+    "status": "published",
+    "variants": [
+      {"id": "var007", "sku": "UC-HUB-001", "price": {"value": 5999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod006",
+    "slug": "webcam-hd-1080p",
+    "name": "Webcam HD 1080p",
+    "status": "published",
+    "variants": [
+      {"id": "var008", "sku": "WC-1080-001", "price": {"value": 7999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod007",
+    "slug": "noise-canceling-headphones",
+    "name": "Noise Canceling Headphones",
+    "status": "published",
+    "variants": [
+      {"id": "var009", "sku": "NC-BLK-001", "price": {"value": 19999, "currency": "USD"}, "currency": "USD"},
+      {"id": "var010", "sku": "NC-WHT-001", "price": {"value": 19999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod008",
+    "slug": "bluetooth-speaker-portable",
+    "name": "Bluetooth Speaker Portable",
+    "status": "published",
+    "variants": [
+      {"id": "var011", "sku": "BS-PORT-001", "price": {"value": 6999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod009",
+    "slug": "smartphone-charger-fast",
+    "name": "Smartphone Charger Fast",
+    "status": "published",
+    "variants": [
+      {"id": "var012", "sku": "SC-FST-001", "price": {"value": 2999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod010",
+    "slug": "tablet-case-universal",
+    "name": "Tablet Case Universal",
+    "status": "published",
+    "variants": [
+      {"id": "var013", "sku": "TC-UNI-001", "price": {"value": 3499, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod011",
+    "slug": "external-ssd-1tb",
+    "name": "External SSD 1TB",
+    "status": "published",
+    "variants": [
+      {"id": "var014", "sku": "ES-1TB-001", "price": {"value": 11999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod012",
+    "slug": "wireless-charging-pad",
+    "name": "Wireless Charging Pad",
+    "status": "published",
+    "variants": [
+      {"id": "var015", "sku": "WC-PAD-001", "price": {"value": 4499, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod013",
+    "slug": "ergonomic-chair-office",
+    "name": "Ergonomic Chair Office",
+    "status": "published",
+    "variants": [
+      {"id": "var016", "sku": "EC-BLK-001", "price": {"value": 34999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod014",
+    "slug": "desk-lamp-led",
+    "name": "Desk Lamp LED",
+    "status": "published",
+    "variants": [
+      {"id": "var017", "sku": "DL-LED-001", "price": {"value": 5999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod015",
+    "slug": "mouse-pad-large",
+    "name": "Mouse Pad Large",
+    "status": "published",
+    "variants": [
+      {"id": "var018", "sku": "MP-LRG-001", "price": {"value": 1999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod016",
+    "slug": "cable-management-kit",
+    "name": "Cable Management Kit",
+    "status": "published",
+    "variants": [
+      {"id": "var019", "sku": "CM-KIT-001", "price": {"value": 2499, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod017",
+    "slug": "portable-power-bank",
+    "name": "Portable Power Bank",
+    "status": "published",
+    "variants": [
+      {"id": "var020", "sku": "PB-10000-001", "price": {"value": 4999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod018",
+    "slug": "hdmi-cable-6ft",
+    "name": "HDMI Cable 6ft",
+    "status": "published",
+    "variants": [
+      {"id": "var021", "sku": "HC-6FT-001", "price": {"value": 1499, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod019",
+    "slug": "printer-paper-a4",
+    "name": "Printer Paper A4",
+    "status": "published",
+    "variants": [
+      {"id": "var022", "sku": "PP-A4-001", "price": {"value": 999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod020",
+    "slug": "privacy-screen-filter",
+    "name": "Privacy Screen Filter",
+    "status": "published",
+    "variants": [
+      {"id": "var023", "sku": "PS-15-001", "price": {"value": 3999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod021",
+    "slug": "smartpen-digital",
+    "name": "Smartpen Digital",
+    "status": "published",
+    "variants": [
+      {"id": "var024", "sku": "SP-DIG-001", "price": {"value": 14999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod022",
+    "slug": "document-scanner-portable",
+    "name": "Document Scanner Portable",
+    "status": "published",
+    "variants": [
+      {"id": "var025", "sku": "DS-PORT-001", "price": {"value": 19999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod023",
+    "slug": "desk-organizer-wood",
+    "name": "Desk Organizer Wood",
+    "status": "published",
+    "variants": [
+      {"id": "var026", "sku": "DO-WD-001", "price": {"value": 3499, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod024",
+    "slug": "whiteboard-magnetic",
+    "name": "Whiteboard Magnetic",
+    "status": "published",
+    "variants": [
+      {"id": "var027", "sku": "WB-MAG-001", "price": {"value": 3999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod025",
+    "slug": "marking-pens-set",
+    "name": "Marking Pens Set",
+    "status": "published",
+    "variants": [
+      {"id": "var028", "sku": "MP-SET-001", "price": {"value": 1499, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod026",
+    "slug": "notebook-premium-a5",
+    "name": "Notebook Premium A5",
+    "status": "published",
+    "variants": [
+      {"id": "var029", "sku": "NB-A5-001", "price": {"value": 1999, "currency": "USD"}, "currency": "USD"}
+    ]
+  },
+  {
+    "id": "prod027",
+    "slug": "stapler-heavy-duty",
+    "name": "Stapler Heavy Duty",
+    "status": "draft",
+    "variants": [
+      {"id": "var030", "sku": "ST-HD-001", "price": {"value": 2999, "currency": "USD"}, "currency": "USD"}
+    ]
+  }
+]

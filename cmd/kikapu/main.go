@@ -11,9 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/platform/config"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
+	"github.com/kyambuthia/kikapu/internal/routes"
 )
 
 var (
@@ -60,7 +62,29 @@ func main() {
 		return
 	}
 
+	productData, err := os.ReadFile("internal/catalog/testdata/products.json")
+	if err != nil {
+		logger.Error("failed to read products data", "error", err)
+		os.Exit(1)
+	}
+
+	products, err := catalog.LoadProductsFromJSON(productData)
+	if err != nil {
+		logger.Error("failed to load products", "error", err)
+		os.Exit(1)
+	}
+
+	if err := catalog.ValidateProducts(products); err != nil {
+		logger.Error("invalid products data", "error", err)
+		os.Exit(1)
+	}
+
+	repo := catalog.NewInMemoryRepository(products)
+	catalogHandler := routes.NewCatalogHandler(repo)
+
 	mux := http.NewServeMux()
+
+	catalogHandler.RegisterRoutes(mux)
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
