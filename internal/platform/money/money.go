@@ -63,5 +63,5 @@ func (a Amount) Round(decimalPlaces int) Amount {
 		divisor *= 10
 	}
 	rounded := (a.Value + divisor/2) / divisor
-	return Amount{Value: rounded * divisor, Currency: a.Currency}
+	return Amount{Value: rounded, Currency: a.Currency}
 }

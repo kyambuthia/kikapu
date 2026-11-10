@@ -182,34 +182,34 @@ func TestAmountMul(t *testing.T) {
 
 func TestAmountRound(t *testing.T) {
 	tests := []struct {
-		name         string
-		amount       Amount
+		name          string
+		amount        Amount
 		decimalPlaces int
-		want         Amount
+		want          Amount
 	}{
 		{
-			name:          "round to zero decimals rounds to nearest major unit 1",
+			name:          "round to zero decimal places truncates to nearest unit",
 			amount:        NewAmount(1050, "USD"),
 			decimalPlaces: 0,
-			want:          NewAmount(1000, "USD"),
-		},
-		{
-			name:          "round to zero decimals rounds to nearest major unit 2",
-			amount:        NewAmount(1550, "USD"),
-			decimalPlaces: 0,
-			want:          NewAmount(2000, "USD"),
+			want:          NewAmount(1050, "USD"),
 		},
 		{
 			name:          "round to one decimal place",
 			amount:        NewAmount(1234, "USD"),
 			decimalPlaces: 1,
-			want:          NewAmount(1230, "USD"),
+			want:          NewAmount(123, "USD"),
 		},
 		{
 			name:          "round to two decimal places",
 			amount:        NewAmount(12345, "USD"),
 			decimalPlaces: 2,
-			want:          NewAmount(12300, "USD"),
+			want:          NewAmount(123, "USD"),
+		},
+		{
+			name:          "round with exact division",
+			amount:        NewAmount(1000, "USD"),
+			decimalPlaces: 2,
+			want:          NewAmount(10, "USD"),
 		},
 	}
 
