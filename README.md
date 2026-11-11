@@ -108,9 +108,17 @@ Configuration is environment-based:
   | POST | `/v1/webhooks/paystack` | Paystack webhook endpoint |
  | GET | `/v1/orders/{id}` | Get order details |
  | POST | `/v1/orders/{id}/refund` | Refund order (requires `Idempotency-Key`) |
- | POST | `/v1/admin/keys` | Create API key (admin only) |
+  | POST | `/v1/admin/keys` | Create API key (admin only) |
  | GET | `/v1/admin/keys` | List API keys (admin only) |
  | DELETE | `/v1/admin/keys/{id}` | Revoke API key (admin only) |
+ | GET | `/v1/admin/products` | List products (admin, requires `admin:read`) |
+ | POST | `/v1/admin/products` | Create product (admin, requires `admin:write`, `Idempotency-Key`) |
+ | GET | `/v1/admin/products/{id}` | Get product (admin, requires `admin:read`) |
+ | PATCH | `/v1/admin/products/{id}` | Update product (admin, requires `admin:write`, `Idempotency-Key`) |
+ | DELETE | `/v1/admin/products/{id}` | Soft delete product (admin, requires `admin:write`, `Idempotency-Key`) |
+ | PUT | `/v1/admin/products/{id}/stock` | Update stock (admin, requires `stock:write`, `Idempotency-Key`) |
+ | GET | `/v1/admin/orders` | List orders (admin, requires `admin:read`) |
+ | GET | `/v1/admin/orders/{id}` | Get order (admin, requires `admin:read`) |
 
 ## API Key Authentication
 
@@ -725,6 +733,135 @@ Response:
   "created_at": "2024-01-15T10:30:00Z"
 }
 ```
+
+## Admin API
+
+The admin API provides storefront-safe management of products, variants, prices, and stock. Unlike the storefront API, the admin API exposes internal IDs, cost prices, and stock counts by location.
+
+### Required Scopes
+
+Admin endpoints require specific scopes:
+
+| Endpoint | Required Scope |
+|----------|----------------|
+| GET /v1/admin/products | `admin:read` |
+| POST /v1/admin/products | `admin:write` |
+| PATCH /v1/admin/products/{id} | `admin:write` |
+| DELETE /v1/admin/products/{id} | `admin:write` |
+| PUT /v1/admin/products/{id}/stock | `stock:write` |
+| GET /v1/admin/orders | `admin:read` |
+| GET /v1/admin/orders/{id} | `admin:read` |
+
+### Product Management
+
+#### Create Product
+
+```bash
+curl -X POST http://localhost:8080/v1/admin/products \
+  -H "Authorization: Bearer kik_admin_key" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: product-creation-123" \
+  -d '{
+    "name": "Wireless Mouse",
+    "slug": "wireless-mouse",
+    "status": "draft",
+    "variants": [
+      {"sku": "WM-BLK-001", "price": 2999, "currency": "USD"},
+      {"sku": "WM-WHT-001", "price": 3499, "currency": "USD"}
+    ]
+  }'
+```
+
+Response:
+```json
+{
+  "id": "prod_20240115103000abc1",
+  "slug": "wireless-mouse",
+  "name": "Wireless Mouse",
+  "status": "draft",
+  "variants": [
+    {"id": "var_001", "sku": "WM-BLK-001", "price": 2999, "currency": "USD"},
+    {"id": "var_002", "sku": "WM-WHT-001", "price": 3499, "currency": "USD"}
+  ]
+}
+```
+
+#### Update Product
+
+```bash
+curl -X PATCH http://localhost:8080/v1/admin/products/prod_001 \
+  -H "Authorization: Bearer kik_admin_key" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: product-update-456" \
+  -d '{"status": "published"}'
+```
+
+#### Soft Delete Product
+
+Deleting a product sets its status to `archived`. Products with existing orders cannot be deleted (returns `409 product_in_use`).
+
+```bash
+curl -X DELETE http://localhost:8080/v1/admin/products/prod_001 \
+  -H "Authorization: Bearer kik_admin_key" \
+  -H "Idempotency-Key: product-delete-789"
+```
+
+### Stock Management
+
+#### Update Stock Level
+
+```bash
+curl -X PUT http://localhost:8080/v1/admin/products/prod_001/stock \
+  -H "Authorization: Bearer kik_admin_key" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: stock-update-001" \
+  -d '{
+    "variant_id": "var_001",
+    "location_id": "warehouse-ke",
+    "on_hand": 100
+  }'
+```
+
+Response:
+```json
+{
+  "variant_id": "var_001",
+  "location_id": "warehouse-ke",
+  "on_hand": 100
+}
+```
+
+### Validation Errors
+
+Validation errors return `400 Bad Request` with field-level details:
+
+```json
+{
+  "error": {
+    "code": "validation_error",
+    "message": "slug must be between 1 and 80 characters",
+    "fields": {
+      "slug": "must be between 1 and 80 characters"
+    }
+  }
+}
+```
+
+### Idempotency
+
+All mutation endpoints require the `Idempotency-Key` header. Replaying a request with the same key returns the original response:
+
+- POST, PATCH, DELETE operations are idempotent
+- Same key + same request = same response
+- Stock updates are loosely idempotent (sets on_hand to the exact value)
+
+### Storefront Safety
+
+The admin API does NOT expose sensitive fields through the storefront API:
+
+- Storefront products never include cost prices
+- Storefront orders never show internal location stock counts
+- Storefront users cannot see archived products
 
 ## Architecture Invariants
 

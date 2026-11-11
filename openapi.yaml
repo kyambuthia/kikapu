@@ -63,36 +63,525 @@ paths:
                     type: string
                     example: "abc123"
 
-components:
-  schemas:
-    ErrorEnvelope:
-      type: object
-      required:
-        - error
-      properties:
-        error:
-          $ref: '#/components/schemas/ErrorDetail'
+  /v1/admin/products:
+    get:
+      summary: List products (admin)
+      description: List all products with optional filtering by status. Requires admin:read scope.
+      operationId: adminListProducts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, published, archived]
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: List of products
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    post:
+      summary: Create product
+      description: Create a new product. Requires admin:write scope.
+      operationId: adminCreateProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductInput'
+      responses:
+        '201':
+          description: Product created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '409':
+          description: Duplicate slug
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 
-    ErrorDetail:
-      type: object
-      required:
-        - code
-        - message
-      properties:
-        code:
-          type: string
-          description: Machine-readable error code
-          example: "invalid_input"
-        message:
-          type: string
-          description: Human-readable error message
-          example: "The request was invalid"
-        request_id:
-          type: string
-          description: Request identifier for tracing
-          example: "a1b2c3d4e5f6g7h8"
+  /v1/admin/products/{id}:
+    get:
+      summary: Get product
+      description: Get a single product by ID. Requires admin:read scope.
+      operationId: adminGetProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Product details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '404':
+          description: Product not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    patch:
+      summary: Update product
+      description: Update a product. Requires admin:write scope.
+      operationId: adminUpdateProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductInput'
+      responses:
+        '200':
+          description: Product updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+        '409':
+          description: Duplicate slug
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      summary: Delete product
+      description: Soft delete a product by setting status to archived. Requires admin:write scope.
+      operationId: adminDeleteProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Product deleted
+        '409':
+          description: Product in use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 
-  responses:
+  /v1/admin/products/{id}/stock:
+    put:
+      summary: Update stock
+      description: Update inventory level for a variant at a location. Requires stock:write scope.
+      operationId: adminUpdateStock
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - variant_id
+                - location_id
+                - on_hand
+              properties:
+                variant_id:
+                  type: string
+                location_id:
+                  type: string
+                on_hand:
+                  type: integer
+                  minimum: 0
+      responses:
+        '200':
+          description: Stock updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  variant_id:
+                    type: string
+                  location_id:
+                    type: string
+                  on_hand:
+                    type: integer
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorEnvelope'
+
+  /v1/admin/orders:
+    get:
+      summary: List orders
+      description: List all orders with optional filtering. Requires admin:read scope.
+      operationId: adminListOrders
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, confirmed, fulfilled, cancelled, refunded]
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderListResponse'
+
+  /v1/admin/orders/{id}:
+    get:
+      summary: Get order
+      description: Get a single order by ID. Requires admin:read scope.
+      operationId: adminGetOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Order details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+ components:
+   schemas:
+     ErrorEnvelope:
+       type: object
+       required:
+         - error
+       properties:
+         error:
+           $ref: '#/components/schemas/ErrorDetail'
+
+     ErrorDetail:
+       type: object
+       required:
+         - code
+         - message
+       properties:
+         code:
+           type: string
+           description: Machine-readable error code
+           example: "invalid_input"
+         message:
+           type: string
+           description: Human-readable error message
+           example: "The request was invalid"
+         request_id:
+           type: string
+           description: Request identifier for tracing
+           example: "a1b2c3d4e5f6g7h8"
+
+     ValidationErrorEnvelope:
+       type: object
+       required:
+         - error
+       properties:
+         error:
+           type: object
+           required:
+             - code
+             - message
+           properties:
+             code:
+               type: string
+               example: "validation_error"
+             message:
+               type: string
+               example: "slug must be between 1 and 80 characters"
+             fields:
+               type: object
+               additionalProperties:
+                 type: string
+               example:
+                 slug: "must be between 1 and 80 characters"
+
+     ProductInput:
+       type: object
+       required:
+         - name
+         - slug
+       properties:
+         name:
+           type: string
+           minLength: 1
+         slug:
+           type: string
+           pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+           maxLength: 80
+         status:
+           type: string
+           enum: [draft, published, archived]
+         variants:
+           type: array
+           items:
+             $ref: '#/components/schemas/VariantInput'
+
+     VariantInput:
+       type: object
+       required:
+         - sku
+         - price
+         - currency
+       properties:
+         sku:
+           type: string
+           minLength: 1
+         price:
+           type: integer
+           minimum: 0
+           description: Price in minor units (cents, pence, etc.)
+         currency:
+           type: string
+           enum: [USD, KES, EUR, GBP, NGN, ZAR, GHS, TZS, UGX, RWF]
+
+     ProductResponse:
+       type: object
+       properties:
+         id:
+           type: string
+         slug:
+           type: string
+         name:
+           type: string
+         status:
+           type: string
+           enum: [draft, published, archived]
+         variants:
+           type: array
+           items:
+             $ref: '#/components/schemas/VariantResponse'
+
+     VariantResponse:
+       type: object
+       properties:
+         id:
+           type: string
+         sku:
+           type: string
+         price:
+           type: integer
+           description: Price in minor units
+         currency:
+           type: string
+
+     ProductListResponse:
+       type: object
+       properties:
+         data:
+           type: array
+           items:
+             $ref: '#/components/schemas/ProductResponse'
+         next_cursor:
+           type: string
+
+     OrderResponse:
+       type: object
+       properties:
+         id:
+           type: string
+         number:
+           type: string
+         status:
+           type: string
+           enum: [pending, confirmed, fulfilled, cancelled, refunded]
+         payment_status:
+           type: string
+           enum: [pending, captured, refunded, partially_refunded]
+         fulfillment_status:
+           type: string
+           enum: [unfulfilled, fulfilled]
+         lines:
+           type: array
+           items:
+             $ref: '#/components/schemas/OrderLineResponse'
+         totals:
+           $ref: '#/components/schemas/OrderTotalsResponse'
+         refunds:
+           type: array
+           items:
+             $ref: '#/components/schemas/OrderRefundResponse'
+         created_at:
+           type: string
+           format: date-time
+         updated_at:
+           type: string
+           format: date-time
+
+     OrderLineResponse:
+       type: object
+       properties:
+         variant_id:
+           type: string
+         sku:
+           type: string
+         quantity:
+           type: integer
+         unit_price:
+           type: integer
+         currency:
+           type: string
+         discount:
+           type: integer
+         tax:
+           type: integer
+
+     OrderTotalsResponse:
+       type: object
+       properties:
+         subtotal:
+           type: integer
+         discount:
+           type: integer
+         tax:
+           type: integer
+         grand_total:
+           type: integer
+         currency:
+           type: string
+
+     OrderRefundResponse:
+       type: object
+       properties:
+         id:
+           type: string
+         amount:
+           type: integer
+         currency:
+           type: string
+         reason:
+           type: string
+         created_at:
+           type: string
+           format: date-time
+
+     OrderListResponse:
+       type: object
+       properties:
+         data:
+           type: array
+           items:
+             $ref: '#/components/schemas/OrderResponse'
+         next_cursor:
+           type: string
+
+   responses:
     Error:
       description: Error response
       content:
@@ -109,4 +598,14 @@ components:
       description: Prevents MIME type sniffing
       schema:
         type: string
-        enum: [nosniff]
+         enum: [nosniff]
+
+ securitySchemes:
+   bearerAuth:
+     type: http
+     scheme: bearer
+     bearerFormat: API Key
+     description: API key with required scopes (admin:read, admin:write, stock:write, stock:read)
+
+ security:
+   - bearerAuth: []
