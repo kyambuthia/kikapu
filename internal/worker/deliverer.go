@@ -72,7 +72,7 @@ func (d *Deliverer) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-func (d *Deliverer) processBatch(ctx context.Context) {
+func (d *Deliverer) ProcessBatch(ctx context.Context) {
 	records, err := d.outbox.Claim(ctx, 10)
 	if err != nil {
 		return
@@ -97,6 +97,10 @@ func (d *Deliverer) processBatch(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (d *Deliverer) processBatch(ctx context.Context) {
+	d.ProcessBatch(ctx)
 }
 
 func (d *Deliverer) deliver(ctx context.Context, record events.Record, sub Subscription) {
