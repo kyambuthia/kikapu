@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"runtime/debug"
-	"runtime/pprof"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -76,16 +74,16 @@ func (l *logger) With(args ...any) Logger {
 }
 
 type Middleware struct {
-	logger     *logger
-	requestID  string
-	metrics    *Metrics
-	tracer     otel_trace.Tracer
-	reqStart   time.Time
-	method     string
-	route      string
-	status     int
-	err        *string
-	duration   atomic.Int64
+	logger    *logger
+	requestID string
+	metrics   *Metrics
+	tracer    otel_trace.Tracer
+	reqStart  time.Time
+	method    string
+	route     string
+	status    int
+	err       *string
+	duration  atomic.Int64
 }
 
 type MiddlewareOptions struct {
@@ -95,10 +93,10 @@ type MiddlewareOptions struct {
 
 func NewMiddleware(opts MiddlewareOptions) *Middleware {
 	return &Middleware{
-		logger: opts.Logger,
+		logger:    opts.Logger,
 		requestID: opts.RequestID,
-		metrics: NewMetrics(),
-		tracer: GetTracer().(otel_trace.Tracer),
+		metrics:   NewMetrics(),
+		tracer:    GetTracer().(otel_trace.Tracer),
 	}
 }
 
@@ -115,21 +113,15 @@ func (m *Middleware) Middleware(next http.Handler) http.Handler {
 
 		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
-		ctx := otel_trace.ContextWithSpan(r.Context(), m.tracer)
-		ctx, span := m.tracer.Start(ctx, "http.request", otel_trace.WithAttributes(
-			attribute.String("http.method", r.Method),
-			attribute.String("http.url", r.URL.Path),
+		ctx, span := otel_trace.SpanFromContext(r.Context()).TracerProvider().Tracer("kikapu").Start(r.Context(), "http.request", otel_trace.WithAttributes(
+			otel_attrs.String("http.method", r.Method),
+			otel_attrs.String("http.url", r.URL.Path),
 		))
 		defer span.End()
 
 		next.ServeHTTP(rw, r)
 
 		m.status = rw.statusCode
-
-		if rw.err != nil {
-			errMsg := rw.err.Error()
-			m.err = &errMsg
-		}
 
 		duration := float64(time.Since(m.reqStart) / time.Millisecond)
 		m.duration.Add(int64(duration))
@@ -149,7 +141,7 @@ func (m *Middleware) Middleware(next http.Handler) http.Handler {
 		})
 
 		m.metrics.Record(durationHistogramOpts{
-			route:  m.route,
+			route:   m.route,
 			latency: duration / 1000.0,
 		})
 	})
@@ -172,10 +164,6 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 func (rw *responseWriter) WriteHeader(statusCode int) {
 	rw.statusCode = statusCode
 	rw.ResponseWriter.WriteHeader(statusCode)
-}
-
-func (rw *responseWriter) WriteError(err error) {
-	rw.err = &err
 }
 
 var routePatternRegex = regexp.MustCompile(`^/v1/([^/]+)/([^/]+)`)
@@ -261,6 +249,10 @@ func (m *Metrics) Record(opts durationHistogramOpts) {
 	m.requestDuration.WithLabelValues(opts.route).Observe(opts.latency)
 }
 
+func (m *Metrics) RecordCheckout(result string) {
+	m.checkoutTotal.WithLabelValues(result).Inc()
+}
+
 type metricsHandler struct {
 	metrics *Metrics
 }
@@ -270,6 +262,7 @@ func NewMetricsHandler(metrics *Metrics) http.Handler {
 }
 
 func (h *metricsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.metrics.MustRegister()
 	w.Header().Set("Content-Type", "text/plain")
 	promhttp.Handler().ServeHTTP(w, r)
 }
@@ -280,9 +273,8 @@ func initTracer() {
 		return
 	}
 
-	res := resource.NewWithAttributes(
-		semconv.SchemaURL,
-		semconv.ServiceNameKey.String("kikapu"),
+	res := otel_attrs.NewResource(
+		otel_attrs.String("service.name", "kikapu"),
 	)
 
 	otlpConn, err := otlptracegrpc.New(context.Background(),

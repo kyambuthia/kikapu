@@ -53,7 +53,7 @@ func TestTransition(t *testing.T) {
 
 func TestAddTracking(t *testing.T) {
 	tests := []struct {
-		name    string
+		name     string
 		tracking Tracking
 		wantErr  error
 	}{

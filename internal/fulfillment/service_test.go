@@ -71,11 +71,11 @@ func (m *mockOrderFetcher) Get(ctx context.Context, id string) (*OrderInfo, erro
 
 func TestCreateFulfillment(t *testing.T) {
 	tests := []struct {
-		name         string
-		order        *OrderInfo
-		existing     []Fulfillment
-		items        []Item
-		wantErr      error
+		name     string
+		order    *OrderInfo
+		existing []Fulfillment
+		items    []Item
+		wantErr  error
 	}{
 		{
 			name: "successful creation",

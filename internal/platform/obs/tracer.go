@@ -25,9 +25,9 @@ type Tracer interface {
 }
 
 type TracerFactory struct {
-	mu        sync.RWMutex
-	tracer    otel_trace.Tracer
-	initOnce  sync.Once
+	mu          sync.RWMutex
+	tracer      otel_trace.Tracer
+	initOnce    sync.Once
 	initialized bool
 }
 

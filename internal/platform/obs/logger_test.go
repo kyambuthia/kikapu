@@ -11,10 +11,10 @@ import (
 
 func TestExtractRoutePattern(t *testing.T) {
 	tests := []struct {
-		name       string
-		path       string
-		want       string
-		wantErr    bool
+		name    string
+		path    string
+		want    string
+		wantErr bool
 	}{
 		{
 			name: "/v1/products/{slug}",
@@ -246,8 +246,8 @@ func (m *Metrics) Record(opts checkoutTotalOpts) {
 type PaymentResult string
 
 const (
-	PaymentResultSuccess   PaymentResult = "success"
-	PaymentResultDeclined  PaymentResult = "declined"
-	PaymentResultStock     PaymentResult = "stock_conflict"
-	PaymentResultError     PaymentResult = "error"
+	PaymentResultSuccess  PaymentResult = "success"
+	PaymentResultDeclined PaymentResult = "declined"
+	PaymentResultStock    PaymentResult = "stock_conflict"
+	PaymentResultError    PaymentResult = "error"
 )

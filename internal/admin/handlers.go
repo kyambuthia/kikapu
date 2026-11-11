@@ -15,9 +15,9 @@ import (
 )
 
 type Handler struct {
-	productRepo   ProductRepository
-	stockRepo     StockRepository
-	orderStore    OrderLister
+	productRepo    ProductRepository
+	stockRepo      StockRepository
+	orderStore     OrderLister
 	fulfillmentSvc *fulfillment.Service
 }
 
