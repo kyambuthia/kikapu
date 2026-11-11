@@ -73,9 +73,9 @@ jobs:
           # Parse results
           scenario=$(echo ${{ inputs.scenario }})
           duration_seconds=${{ inputs.duration }}
-          error_rate=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .error_rate")
-          p99_latency=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .latencies.p99")
-          duration_ms=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .duration" | sed 's/s$//')
+          error_rate=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .error_rate")
+          p99_latency=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .latencies.p99")
+          duration_ms=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .duration" | sed 's/s$//')
 
           echo "error_rate=$error_rate" >> $GITHUB_OUTPUT
           echo "p99_latency=$p99_latency" >> $GITHUB_OUTPUT
@@ -121,9 +121,9 @@ jobs:
         run: |
           scenario="${{ inputs.scenario }}"
           duration_sec=${{ inputs.duration }}
-          consumed_rps=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .throughput / ${duration_sec} | floor")
-          error_rate=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .error_rate")
-          p99_ms=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .latencies.p99" | sed 's/ms$//')
+          consumed_rps=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .throughput / ${duration_sec} | floor")
+          error_rate=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .error_rate")
+          p99_ms=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .latencies.p99" | sed 's/ms$//')
           budget_p99=$(echo "${{ steps.set-outputs.outputs.budget_p99 }}")
           rps_limit=$(echo "${{ steps.set-outputs.outputs.max_rps }}")
 
