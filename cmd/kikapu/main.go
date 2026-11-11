@@ -30,13 +30,7 @@ var (
 func main() {
 	addr := flag.String("addr", ":8080", "address to listen on")
 	mode := flag.String("mode", "api", "operation mode (api|worker)")
-	showHelp := flag.Bool("help", false, "show help")
 	flag.Parse()
-
-	if *showHelp {
-		flag.Usage()
-		os.Exit(0)
-	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -114,18 +108,20 @@ func main() {
 		})
 	})
 
-	handler := httpx.LoggingMiddleware(mux)
+	handler := httpx.LoggingMiddleware(logger)(httpx.RequestIDMiddleware(mux))
 
 	server := &http.Server{
-		Addr:         cfg.Addr,
-		Handler:      handler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              cfg.Addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
+	logger.Info("starting server", "version", version, "commit", commit, "addr", cfg.Addr, "mode", cfg.Mode)
+
 	go func() {
-		logger.Info("starting server", "addr", cfg.Addr, "version", version, "commit", commit)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("server error", "error", err)
 			os.Exit(1)

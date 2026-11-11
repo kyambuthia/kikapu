@@ -2,6 +2,7 @@ package cart
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/kyambuthia/kikapu/internal/platform/money"
@@ -114,8 +115,10 @@ func (c *Cart) Total() (money.Amount, error) {
 
 	total := money.NewAmount(0, c.Currency)
 	for _, line := range c.Lines {
-		lineTotal := line.UnitPrice.Mul(int64(line.Quantity))
-		var err error
+		lineTotal, err := line.UnitPrice.Mul(int64(line.Quantity))
+		if err != nil {
+			return money.Amount{}, fmt.Errorf("cart: calculate line total: %w", err)
+		}
 		total, err = total.Add(lineTotal)
 		if err != nil {
 			return money.Amount{}, err

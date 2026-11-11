@@ -1,164 +1,245 @@
 package httpx
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
+type mockLogger struct {
+	lastMsg  string
+	lastArgs []interface{}
+}
+
+func (m *mockLogger) Info(msg string, args ...interface{}) {
+	m.lastMsg = msg
+	m.lastArgs = args
+}
+
 func TestWriteJSON(t *testing.T) {
 	tests := []struct {
-		name     string
-		data     interface{}
-		status   int
-		wantBody string
+		name       string
+		status     int
+		data       interface{}
+		wantBody   string
+		wantHeader string
 	}{
 		{
-			name:     "simple object",
-			data:     map[string]string{"status": "ok"},
-			status:   http.StatusOK,
-			wantBody: `{"status":"ok"}`,
+			name:       "success with data",
+			status:     http.StatusOK,
+			data:       map[string]string{"key": "value"},
+			wantBody:   `{"key":"value"}`,
+			wantHeader: "application/json; charset=utf-8",
 		},
 		{
-			name:     "nil data",
-			data:     nil,
-			status:   http.StatusOK,
-			wantBody: "null",
+			name:       "204 no content",
+			status:     http.StatusNoContent,
+			data:       nil,
+			wantBody:   "",
+			wantHeader: "application/json; charset=utf-8",
 		},
 		{
-			name:     "number",
-			data:     42,
-			status:   http.StatusOK,
-			wantBody: "42",
+			name:       "error response",
+			status:     http.StatusBadRequest,
+			data:       map[string]int{"code": 400},
+			wantBody:   `{"code":400}`,
+			wantHeader: "application/json; charset=utf-8",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			WriteJSON(w, tt.status, tt.data)
-
+			err := WriteJSON(w, tt.status, tt.data)
+			if err != nil {
+				t.Errorf("WriteJSON() error = %v", err)
+			}
 			if w.Code != tt.status {
 				t.Errorf("WriteJSON() status = %v, want %v", w.Code, tt.status)
 			}
-
-			if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-				t.Errorf("WriteJSON() Content-Type = %v, want application/json", ct)
+			if ct := w.Header().Get("Content-Type"); ct != tt.wantHeader {
+				t.Errorf("WriteJSON() Content-Type = %v, want %v", ct, tt.wantHeader)
 			}
-
-			got := strings.TrimSpace(w.Body.String())
-			if got != tt.wantBody {
-				t.Errorf("WriteJSON() body = %q, want %q", got, tt.wantBody)
+			if nosniff := w.Header().Get("X-Content-Type-Options"); nosniff != "nosniff" {
+				t.Errorf("WriteJSON() X-Content-Type-Options = %v, want nosniff", nosniff)
+			}
+			if tt.wantBody != "" {
+				if w.Body.String() != tt.wantBody+"\n" {
+					t.Errorf("WriteJSON() body = %v, want %v", w.Body.String(), tt.wantBody+"\n")
+				}
 			}
 		})
 	}
 }
 
 func TestWriteError(t *testing.T) {
-	w := httptest.NewRecorder()
-	WriteError(w, http.StatusBadRequest, "invalid_input", "The request body is invalid")
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("WriteError() status = %v, want %v", w.Code, http.StatusBadRequest)
+	tests := []struct {
+		name      string
+		status    int
+		code      string
+		message   string
+		requestID string
+		want      ErrorEnvelope
+	}{
+		{
+			name:      "error with request id",
+			status:    http.StatusBadRequest,
+			code:      "invalid_input",
+			message:   "The request was invalid",
+			requestID: "test-request-123",
+			want: ErrorEnvelope{
+				Error: ErrorDetail{
+					Code:      "invalid_input",
+					Message:   "The request was invalid",
+					RequestID: "test-request-123",
+				},
+			},
+		},
+		{
+			name:      "error without request id",
+			status:    http.StatusInternalServerError,
+			code:      "internal_error",
+			message:   "Something went wrong",
+			requestID: "",
+			want: ErrorEnvelope{
+				Error: ErrorDetail{
+					Code:      "internal_error",
+					Message:   "Something went wrong",
+					RequestID: "",
+				},
+			},
+		},
 	}
 
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("WriteError() Content-Type = %v, want application/json", ct)
-	}
-
-	var envelope ErrorEnvelope
-	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("Failed to unmarshal response: %v", err)
-	}
-
-	if envelope.Error.Code != "invalid_input" {
-		t.Errorf("WriteError() code = %v, want invalid_input", envelope.Error.Code)
-	}
-
-	if envelope.Error.Message != "The request body is invalid" {
-		t.Errorf("WriteError() message = %v, want 'The request body is invalid'", envelope.Error.Message)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			err := WriteError(w, tt.status, tt.code, tt.message, tt.requestID)
+			if err != nil {
+				t.Errorf("WriteError() error = %v", err)
+			}
+			if w.Code != tt.status {
+				t.Errorf("WriteError() status = %v, want %v", w.Code, tt.status)
+			}
+			var got ErrorEnvelope
+			json.Unmarshal(w.Body.Bytes(), &got)
+			if got.Error.Code != tt.want.Error.Code {
+				t.Errorf("WriteError() code = %v, want %v", got.Error.Code, tt.want.Error.Code)
+			}
+			if got.Error.Message != tt.want.Error.Message {
+				t.Errorf("WriteError() message = %v, want %v", got.Error.Message, tt.want.Error.Message)
+			}
+		})
 	}
 }
 
 func TestErrorEnvelope(t *testing.T) {
 	envelope := ErrorEnvelope{
 		Error: ErrorDetail{
-			Code:    "not_found",
-			Message: "Resource not found",
+			Code:      "test_code",
+			Message:   "test message",
+			RequestID: "req-123",
 		},
 	}
 
 	data, err := json.Marshal(envelope)
 	if err != nil {
-		t.Fatalf("Failed to marshal envelope: %v", err)
+		t.Fatalf("Marshal() error = %v", err)
 	}
 
-	want := `{"error":{"code":"not_found","message":"Resource not found"}}`
-	var buf bytes.Buffer
-	if err := json.Compact(&buf, data); err != nil {
-		t.Fatalf("Failed to compact JSON: %v", err)
-	}
-
-	if got := buf.String(); got != want {
-		t.Errorf("ErrorEnvelope JSON = %v, want %v", got, want)
+	want := `{"error":{"code":"test_code","message":"test message","request_id":"req-123"}}`
+	if string(data) != want {
+		t.Errorf("Marshal() = %s, want %s", data, want)
 	}
 }
 
-func TestRequestIDHeader(t *testing.T) {
+func TestRequestID(t *testing.T) {
 	tests := []struct {
-		name   string
-		header string
-		want   string
+		name  string
+		setup func(*http.Request)
+		want  string
 	}{
 		{
-			name:   "with header",
-			header: "req-123",
-			want:   "req-123",
+			name: "from header",
+			setup: func(r *http.Request) {
+				r.Header.Set("X-Request-ID", "header-id")
+			},
+			want: "header-id",
 		},
 		{
-			name:   "without header",
-			header: "",
-			want:   "",
+			name: "from context",
+			setup: func(r *http.Request) {
+				ctx := SetRequestID(r.Context(), "ctx-id")
+				*r = *r.WithContext(ctx)
+			},
+			want: "ctx-id",
+		},
+		{
+			name:  "empty when not set",
+			setup: func(r *http.Request) {},
+			want:  "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			if tt.header != "" {
-				req.Header.Set("X-Request-ID", tt.header)
-			}
-
-			got := RequestIDHeader(req)
-			if got != tt.want {
-				t.Errorf("RequestIDHeader() = %v, want %v", got, tt.want)
+			req := httptest.NewRequest("GET", "/", nil)
+			tt.setup(req)
+			if got := RequestID(req); got != tt.want {
+				t.Errorf("RequestID() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestLoggingMiddleware(t *testing.T) {
-	var logOutput []byte
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte("test"))
+func TestRequestIDMiddleware(t *testing.T) {
+	t.Run("uses existing request id", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := RequestID(r); got != "existing-id" {
+				t.Errorf("RequestID() = %v, want existing-id", got)
+			}
+		})
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("X-Request-ID", "existing-id")
+		rec := httptest.NewRecorder()
+		RequestIDMiddleware(handler).ServeHTTP(rec, req)
+		if rec.Header().Get("X-Request-ID") != "existing-id" {
+			t.Errorf("X-Request-ID header = %v, want existing-id", rec.Header().Get("X-Request-ID"))
+		}
 	})
 
-	middleware := LoggingMiddleware(handler)
+	t.Run("generates request id when missing", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := RequestID(r); got == "" {
+				t.Error("RequestID() empty, want generated id")
+			}
+			if len(RequestID(r)) != 32 {
+				t.Errorf("RequestID() length = %d, want 32", len(RequestID(r)))
+			}
+		})
+		req := httptest.NewRequest("GET", "/", nil)
+		rec := httptest.NewRecorder()
+		RequestIDMiddleware(handler).ServeHTTP(rec, req)
+		if rec.Header().Get("X-Request-ID") == "" {
+			t.Error("X-Request-ID header empty")
+		}
+	})
+}
 
-	req := httptest.NewRequest(http.MethodPost, "/test", nil)
-	req.Header.Set("X-Request-ID", "test-123")
-	w := httptest.NewRecorder()
+func TestLoggingMiddleware(t *testing.T) {
+	logger := &mockLogger{}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	})
 
-	middleware.ServeHTTP(w, req)
+	req := httptest.NewRequest("POST", "/test", nil)
+	req.Header.Set("X-Request-ID", "test-id")
+	rec := httptest.NewRecorder()
 
-	logOutput = w.Body.Bytes()
+	LoggingMiddleware(logger)(handler).ServeHTTP(rec, req)
 
-	if len(logOutput) == 0 {
-		t.Error("Expected logged output")
+	if logger.lastMsg != "request" {
+		t.Errorf("logger message = %v, want 'request'", logger.lastMsg)
 	}
 }

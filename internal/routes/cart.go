@@ -60,12 +60,12 @@ func (h *CartHandler) RegisterRoutes(mux *http.ServeMux) {
 func (h *CartHandler) CreateCart(w http.ResponseWriter, r *http.Request) {
 	var req CreateCartRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
 
 	if req.Currency == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "missing_currency", "currency is required")
+		httpx.WriteError(w, http.StatusBadRequest, "missing_currency", "currency is required", httpx.RequestID(r))
 		return
 	}
 
@@ -73,7 +73,7 @@ func (h *CartHandler) CreateCart(w http.ResponseWriter, r *http.Request) {
 	c := cart.NewCart(id, req.Currency)
 
 	if err := h.store.Save(c); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to create cart")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to create cart", httpx.RequestID(r))
 		return
 	}
 
@@ -86,10 +86,10 @@ func (h *CartHandler) GetCart(w http.ResponseWriter, r *http.Request) {
 	c, err := h.store.Get(id)
 	if err != nil {
 		if errors.Is(err, cart.ErrCartNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found")
+			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found", httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get cart")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get cart", httpx.RequestID(r))
 		return
 	}
 
@@ -102,16 +102,16 @@ func (h *CartHandler) DeleteCart(w http.ResponseWriter, r *http.Request) {
 	c, err := h.store.Get(id)
 	if err != nil {
 		if errors.Is(err, cart.ErrCartNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found")
+			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found", httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get cart")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get cart", httpx.RequestID(r))
 		return
 	}
 
 	c.Clear()
 	if err := h.store.Save(c); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to clear cart")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to clear cart", httpx.RequestID(r))
 		return
 	}
 
@@ -123,38 +123,38 @@ func (h *CartHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 
 	var req AddItemRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
 
 	c, err := h.store.Get(id)
 	if err != nil {
 		if errors.Is(err, cart.ErrCartNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found")
+			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found", httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get cart")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get cart", httpx.RequestID(r))
 		return
 	}
 
 	version, err := c.AddItem(req.VariantID, req.Quantity, money.NewAmount(req.UnitPrice, c.Currency))
 	if err != nil {
 		if errors.Is(err, cart.ErrInvalidQuantity) {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid_quantity", err.Error())
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_quantity", err.Error(), httpx.RequestID(r))
 			return
 		}
 		if errors.Is(err, cart.ErrCurrencyMismatch) {
-			httpx.WriteError(w, http.StatusBadRequest, "currency_mismatch", err.Error())
+			httpx.WriteError(w, http.StatusBadRequest, "currency_mismatch", err.Error(), httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to add item")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to add item", httpx.RequestID(r))
 		return
 	}
 
 	_ = version
 
 	if err := h.store.Save(c); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to save cart")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to save cart", httpx.RequestID(r))
 		return
 	}
 
@@ -167,36 +167,36 @@ func (h *CartHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 
 	var req UpdateItemRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
 
 	c, err := h.store.Get(id)
 	if err != nil {
 		if errors.Is(err, cart.ErrCartNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found")
+			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found", httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get cart")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get cart", httpx.RequestID(r))
 		return
 	}
 
 	_, err = c.UpdateQuantity(variantID, req.Quantity)
 	if err != nil {
 		if errors.Is(err, cart.ErrInvalidQuantity) {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid_quantity", err.Error())
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_quantity", err.Error(), httpx.RequestID(r))
 			return
 		}
 		if errors.Is(err, cart.ErrItemNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "item_not_found", err.Error())
+			httpx.WriteError(w, http.StatusNotFound, "item_not_found", err.Error(), httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to update item")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to update item", httpx.RequestID(r))
 		return
 	}
 
 	if err := h.store.Save(c); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to save cart")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to save cart", httpx.RequestID(r))
 		return
 	}
 
@@ -210,25 +210,25 @@ func (h *CartHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
 	c, err := h.store.Get(id)
 	if err != nil {
 		if errors.Is(err, cart.ErrCartNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found")
+			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found", httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get cart")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get cart", httpx.RequestID(r))
 		return
 	}
 
 	_, err = c.RemoveItem(variantID)
 	if err != nil {
 		if errors.Is(err, cart.ErrItemNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "item_not_found", err.Error())
+			httpx.WriteError(w, http.StatusNotFound, "item_not_found", err.Error(), httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to remove item")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to remove item", httpx.RequestID(r))
 		return
 	}
 
 	if err := h.store.Save(c); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to save cart")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to save cart", httpx.RequestID(r))
 		return
 	}
 
@@ -238,27 +238,27 @@ func (h *CartHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
 func (h *CartHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 	idempotencyKey := r.Header.Get("Idempotency-Key")
 	if idempotencyKey == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "missing_idempotency_key", "Idempotency-Key header is required")
+		httpx.WriteError(w, http.StatusBadRequest, "missing_idempotency_key", "Idempotency-Key header is required", httpx.RequestID(r))
 		return
 	}
 
 	var req CheckoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
 
 	order, err := h.checkout.PlaceOrder(req.CartID, idempotencyKey)
 	if err != nil {
 		if errors.Is(err, cart.ErrCartNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found")
+			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found", httpx.RequestID(r))
 			return
 		}
 		if errors.Is(err, checkout.ErrEmptyCart) {
-			httpx.WriteError(w, http.StatusBadRequest, "empty_cart", err.Error())
+			httpx.WriteError(w, http.StatusBadRequest, "empty_cart", err.Error(), httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to place order")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to place order", httpx.RequestID(r))
 		return
 	}
 
