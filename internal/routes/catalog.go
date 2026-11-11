@@ -70,10 +70,6 @@ func parseVariantFields(fieldsParam string) map[string]bool {
 	return variantFields
 }
 
-func applySparseFieldset(product catalog.Product, fields map[string]bool) ProductResponse {
-	return applySparseFieldsetWithVariant(product, fields, nil)
-}
-
 func applySparseFieldsetWithVariant(product catalog.Product, fields map[string]bool, variantFields map[string]bool) ProductResponse {
 	if fields == nil && variantFields == nil {
 		return ProductResponse{
@@ -115,7 +111,7 @@ func applySparseFieldsetWithVariant(product catalog.Product, fields map[string]b
 		}
 	}
 
-	if variantFields != nil && len(variantFields) > 0 && len(product.Variants) > 0 {
+	if len(variantFields) > 0 && len(product.Variants) > 0 {
 		variants := convertVariants(product.Variants, variantFields)
 		resp.Variants = variants
 	}
@@ -155,7 +151,7 @@ func convertVariants(variants []catalog.Variant, fields map[string]bool) []Varia
 
 func (h *CatalogHandler) listProducts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
 		return
 	}
 
@@ -166,14 +162,14 @@ func (h *CatalogHandler) listProducts(w http.ResponseWriter, r *http.Request) {
 	if limitStr != "" {
 		parsedLimit, err := strconv.Atoi(limitStr)
 		if err != nil {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid_limit", "limit must be a valid integer")
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_limit", "limit must be a valid integer", httpx.RequestID(r))
 			return
 		}
 		limit = parsedLimit
 	}
 
 	if limit < 1 || limit > catalog.MaxLimit {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_limit", "limit must be between 1 and 100")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_limit", "limit must be between 1 and 100", httpx.RequestID(r))
 		return
 	}
 
@@ -195,7 +191,7 @@ func (h *CatalogHandler) listProducts(w http.ResponseWriter, r *http.Request) {
 				baseField = strings.TrimPrefix(field, "variants.")
 			}
 			if !validProductFields[baseField] && !validVariantFields[baseField] {
-				httpx.WriteError(w, http.StatusBadRequest, "invalid_field", "unknown field: "+field)
+				httpx.WriteError(w, http.StatusBadRequest, "invalid_field", "unknown field: "+field, httpx.RequestID(r))
 				return
 			}
 		}
@@ -209,10 +205,10 @@ func (h *CatalogHandler) listProducts(w http.ResponseWriter, r *http.Request) {
 	products, nextCursor, err := h.Repo.List(ctx, opts)
 	if err != nil {
 		if errors.Is(err, catalog.ErrInvalidCursor) {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid_cursor", "invalid cursor")
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_cursor", "invalid cursor", httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
 		return
 	}
 
@@ -235,20 +231,20 @@ func (h *CatalogHandler) listProducts(w http.ResponseWriter, r *http.Request) {
 
 func (h *CatalogHandler) getProduct(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
 		return
 	}
 
 	ctx := r.Context()
 	path := r.URL.Path
 	if !strings.HasPrefix(path, "/v1/products/") {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found", httpx.RequestID(r))
 		return
 	}
 
 	slug := strings.TrimPrefix(path, "/v1/products/")
 	if slug == "" {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found", httpx.RequestID(r))
 		return
 	}
 
@@ -269,7 +265,7 @@ func (h *CatalogHandler) getProduct(w http.ResponseWriter, r *http.Request) {
 				baseField = strings.TrimPrefix(field, "variants.")
 			}
 			if !validProductFields[baseField] && !validVariantFields[baseField] {
-				httpx.WriteError(w, http.StatusBadRequest, "invalid_field", "unknown field: "+field)
+				httpx.WriteError(w, http.StatusBadRequest, "invalid_field", "unknown field: "+field, httpx.RequestID(r))
 				return
 			}
 		}
@@ -278,10 +274,10 @@ func (h *CatalogHandler) getProduct(w http.ResponseWriter, r *http.Request) {
 	product, err := h.Repo.Get(ctx, slug)
 	if err != nil {
 		if errors.Is(err, catalog.ErrProductNotFound) {
-			httpx.WriteError(w, http.StatusNotFound, "product_not_found", "product not found")
+			httpx.WriteError(w, http.StatusNotFound, "product_not_found", "product not found", httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
 		return
 	}
 

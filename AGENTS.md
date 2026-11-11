@@ -2,6 +2,8 @@
 
 This file contains invariants and guidelines for AI agents working on this codebase.
 
+See `docs/STANDARDS.md` for the complete engineering standards enforced by CI.
+
 ## Architecture Invariants
 
 1. **Single Binary**: The service must remain a single binary. All functionality is compiled into one executable.
@@ -55,10 +57,13 @@ This file contains invariants and guidelines for AI agents working on this codeb
 ## Build and CI
 
 - `gofmt -l .` must print nothing
+- `goimports -l .` must print nothing  
 - `go vet ./...` must be clean
+- `staticcheck ./...` must be clean
+- `golangci-lint run` must be clean
 - `go build ./...` must succeed
-- `go test ./...` must pass
-- `go run ./cmd/kikapu --help` must exit 0
+- `go test -race ./...` must pass
+- Coverage on `internal/platform` must be >= 80%
 
 ## Running Tests
 

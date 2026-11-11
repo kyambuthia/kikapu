@@ -1,0 +1,112 @@
+openapi: 3.1.0
+info:
+  title: kikapu API
+  description: Shopping cart service API
+  version: 1.0.0
+  contact:
+    name: kikapu Team
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      description: Returns service health status
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                    example: ok
+
+  /readyz:
+    get:
+      summary: Readiness check
+      description: Returns service readiness status
+      operationId: getReady
+      responses:
+        '200':
+          description: Service is ready
+
+  /v1/version:
+    get:
+      summary: Version information
+      description: Returns service version and commit information
+      operationId: getVersion
+      responses:
+        '200':
+          description: Version information
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - version
+                  - commit
+                properties:
+                  version:
+                    type: string
+                    example: "1.0.0"
+                  commit:
+                    type: string
+                    example: "abc123"
+
+components:
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    ErrorDetail:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+          example: "invalid_input"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "The request was invalid"
+        request_id:
+          type: string
+          description: Request identifier for tracing
+          example: "a1b2c3d4e5f6g7h8"
+
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+  headers:
+    X-Request-ID:
+      description: Request identifier for tracing
+      schema:
+        type: string
+    X-Content-Type-Options:
+      description: Prevents MIME type sniffing
+      schema:
+        type: string
+        enum: [nosniff]

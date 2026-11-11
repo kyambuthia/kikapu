@@ -1,41 +1,66 @@
 package httpx
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"time"
 )
+
+type ctxKeyRequestID struct{}
 
 type ErrorEnvelope struct {
 	Error ErrorDetail `json:"error"`
 }
 
 type ErrorDetail struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
 }
 
 func WriteJSON(w http.ResponseWriter, status int, data interface{}) error {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if status == http.StatusNoContent {
+		w.WriteHeader(status)
+		return nil
+	}
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(data)
 }
 
-func WriteError(w http.ResponseWriter, status int, code, message string) error {
+func WriteError(w http.ResponseWriter, status int, code, message, requestID string) error {
 	envelope := ErrorEnvelope{
 		Error: ErrorDetail{
-			Code:    code,
-			Message: message,
+			Code:      code,
+			Message:   message,
+			RequestID: requestID,
 		},
 	}
 	return WriteJSON(w, status, envelope)
 }
 
-func RequestIDHeader(r *http.Request) string {
+func RequestID(r *http.Request) string {
 	if id := r.Header.Get("X-Request-ID"); id != "" {
 		return id
 	}
+	if ctxID, ok := r.Context().Value(ctxKeyRequestID{}).(string); ok {
+		return ctxID
+	}
 	return ""
+}
+
+func SetRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, ctxKeyRequestID{}, id)
+}
+
+func generateRequestID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 type responseWriter struct {
@@ -48,24 +73,34 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-func LoggingMiddleware(next http.Handler) http.Handler {
+func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-
-		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-		next.ServeHTTP(rw, r)
-
-		duration := time.Since(start)
-		requestID := RequestIDHeader(r)
-
-		logEntry := map[string]interface{}{
-			"method":      r.Method,
-			"path":        r.URL.Path,
-			"status":      rw.statusCode,
-			"duration_ms": duration.Milliseconds(),
-			"request_id":  requestID,
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = generateRequestID()
 		}
-
-		json.NewEncoder(rw).Encode(logEntry)
+		ctx := SetRequestID(r.Context(), requestID)
+		r = r.WithContext(ctx)
+		w.Header().Set("X-Request-ID", requestID)
+		next.ServeHTTP(w, r)
 	})
+}
+
+func LoggingMiddleware(logger interface{ Info(string, ...any) }) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			next.ServeHTTP(rw, r)
+			duration := time.Since(start)
+			requestID := RequestID(r)
+			logger.Info("request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", rw.statusCode,
+				"duration_ms", duration.Milliseconds(),
+				"request_id", requestID,
+			)
+		})
+	}
 }
