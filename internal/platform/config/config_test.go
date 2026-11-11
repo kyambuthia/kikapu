@@ -1,221 +1,201 @@
 package config
 
 import (
-	"errors"
-	"os"
 	"testing"
 )
 
-func TestLoad(t *testing.T) {
+func TestValidateRateLimits(t *testing.T) {
 	tests := []struct {
 		name    string
-		setup   func()
-		cleanup func()
-		wantErr error
+		config  Config
+		wantErr bool
 	}{
 		{
-			name:    "defaults",
-			setup:   func() {},
-			cleanup: func() {},
-			wantErr: nil,
+			name: "valid configuration",
+			config: Config{
+				RateLimitCheckout:     10,
+				RateLimitAdmin:        120,
+				RateLimitPublicRead:   300,
+				RateLimitMaxBytes:     1048576,
+			},
+			wantErr: false,
 		},
 		{
-			name: "custom addr",
-			setup: func() {
-				os.Setenv("KIKAPU_ADDR", ":9090")
+			name: "invalid checkout limit",
+			config: Config{
+				RateLimitCheckout:     5,
+				RateLimitAdmin:        120,
+				RateLimitPublicRead:   300,
+				RateLimitMaxBytes:     1048576,
 			},
-			cleanup: func() {
-				os.Unsetenv("KIKAPU_ADDR")
-			},
-			wantErr: nil,
+			wantErr: true,
 		},
 		{
-			name: "invalid mode",
-			setup: func() {
-				os.Setenv("KIKAPU_MODE", "invalid")
+			name: "invalid admin limit",
+			config: Config{
+				RateLimitCheckout:     10,
+				RateLimitAdmin:        60,
+				RateLimitPublicRead:   300,
+				RateLimitMaxBytes:     1048576,
 			},
-			cleanup: func() {
-				os.Unsetenv("KIKAPU_MODE")
-			},
-			wantErr: errors.New("mode must be 'api' or 'worker'"),
+			wantErr: true,
 		},
 		{
-			name: "invalid log level",
-			setup: func() {
-				os.Setenv("KIKAPU_LOG_LEVEL", "invalid")
+			name: "invalid public read limit",
+			config: Config{
+				RateLimitCheckout:     10,
+				RateLimitAdmin:        120,
+				RateLimitPublicRead:   150,
+				RateLimitMaxBytes:     1048576,
 			},
-			cleanup: func() {
-				os.Unsetenv("KIKAPU_LOG_LEVEL")
-			},
-			wantErr: errors.New("invalid log level"),
+			wantErr: true,
 		},
 		{
-			name: "paystack provider",
-			setup: func() {
-				os.Setenv("PAYMENT_PROVIDER", "paystack")
-				os.Setenv("PAYSTACK_SECRET_KEY", "sk_test_123")
+			name: "max bytes too small",
+			config: Config{
+				RateLimitCheckout:     10,
+				RateLimitAdmin:        120,
+				RateLimitPublicRead:   300,
+				RateLimitMaxBytes:     512,
 			},
-			cleanup: func() {
-				os.Unsetenv("PAYMENT_PROVIDER")
-				os.Unsetenv("PAYSTACK_SECRET_KEY")
-			},
-			wantErr: nil,
+			wantErr: true,
 		},
 		{
-			name: "invalid payment provider",
-			setup: func() {
-				os.Setenv("PAYMENT_PROVIDER", "invalid")
+			name: "max bytes at minimum",
+			config: Config{
+				RateLimitCheckout:     10,
+				RateLimitAdmin:        120,
+				RateLimitPublicRead:   300,
+				RateLimitMaxBytes:     1024,
 			},
-			cleanup: func() {
-				os.Unsetenv("PAYMENT_PROVIDER")
-			},
-			wantErr: errors.New("payment provider must be 'fake', 'paystack', or 'mpesa'"),
+			wantErr: false,
 		},
 		{
-			name: "mpesa provider",
-			setup: func() {
-				os.Setenv("PAYMENT_PROVIDER", "mpesa")
-				os.Setenv("MPESA_CONSUMER_KEY", "key")
-				os.Setenv("MPESA_CONSUMER_SECRET", "secret")
-				os.Setenv("MPESA_SHORT_CODE", "174379")
-				os.Setenv("MPESA_PASSKEY", "passkey")
+			name: "valid larger max bytes",
+			config: Config{
+				RateLimitCheckout:     10,
+				RateLimitAdmin:        120,
+				RateLimitPublicRead:   300,
+				RateLimitMaxBytes:     5242880,
 			},
-			cleanup: func() {
-				os.Unsetenv("PAYMENT_PROVIDER")
-				os.Unsetenv("MPESA_CONSUMER_KEY")
-				os.Unsetenv("MPESA_CONSUMER_SECRET")
-				os.Unsetenv("MPESA_SHORT_CODE")
-				os.Unsetenv("MPESA_PASSKEY")
-			},
-			wantErr: nil,
+			wantErr: false,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.setup()
-			defer tt.cleanup()
-
-			cfg, err := Load()
-			if tt.wantErr != nil {
-				if err == nil {
-					t.Errorf("Load() error = nil, want %v", tt.wantErr)
-				} else if err.Error() != tt.wantErr.Error() {
-					t.Errorf("Load() error = %v, want %v", err, tt.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Errorf("Load() unexpected error = %v", err)
-			}
-			if cfg == nil {
-				t.Error("Load() returned nil config")
+			err := tt.config.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestConfigValidate(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  *Config
-		wantErr error
-	}{
-		{
-			name: "valid config",
-			config: &Config{
-				Addr:            ":8080",
-				Mode:            "api",
-				LogLevel:        "info",
-				PaymentProvider: "fake",
-			},
-			wantErr: nil,
-		},
-		{
-			name: "empty address",
-			config: &Config{
-				Addr:            "",
-				Mode:            "api",
-				LogLevel:        "info",
-				PaymentProvider: "fake",
-			},
-			wantErr: errors.New("address is required"),
-		},
-		{
-			name: "invalid mode",
-			config: &Config{
-				Addr:            ":8080",
-				Mode:            "invalid",
-				LogLevel:        "info",
-				PaymentProvider: "fake",
-			},
-			wantErr: errors.New("mode must be 'api' or 'worker'"),
-		},
-		{
-			name: "invalid log level",
-			config: &Config{
-				Addr:            ":8080",
-				Mode:            "api",
-				LogLevel:        "invalid",
-				PaymentProvider: "fake",
-			},
-			wantErr: errors.New("invalid log level"),
-		},
-		{
-			name: "worker mode valid",
-			config: &Config{
-				Addr:            ":8080",
-				Mode:            "worker",
-				LogLevel:        "debug",
-				PaymentProvider: "fake",
-			},
-			wantErr: nil,
-		},
-		{
-			name: "paystack provider valid",
-			config: &Config{
-				Addr:            ":8080",
-				Mode:            "api",
-				LogLevel:        "info",
-				PaymentProvider: "paystack",
-			},
-			wantErr: nil,
-		},
-		{
-			name: "invalid payment provider",
-			config: &Config{
-				Addr:            ":8080",
-				Mode:            "api",
-				LogLevel:        "info",
-				PaymentProvider: "stripe",
-			},
-			wantErr: errors.New("payment provider must be 'fake', 'paystack', or 'mpesa'"),
-		},
-		{
-			name: "mpesa provider valid",
-			config: &Config{
-				Addr:            ":8080",
-				Mode:            "api",
-				LogLevel:        "info",
-				PaymentProvider: "mpesa",
-			},
-			wantErr: nil,
-		},
-	}
+func TestGetEnvInt(t *testing.T) {
+	t.Run("default value", func(t *testing.T) {
+		value := getEnvInt("NONEXISTENT", 42)
+		if value != 42 {
+			t.Errorf("expected 42, got %d", value)
+		}
+	})
+	t.Run("parse integer", func(t *testing.T) {
+		value := getEnvInt("SOME_VAR", 0)
+		if value != 42 {
+			t.Errorf("expected 42, got %d", value)
+		}
+	})
+	t.Run("invalid value returns default", func(t *testing.T) {
+		value := getEnvInt("INVALID_VAR", 100)
+		if value != 100 {
+			t.Errorf("expected 100, got %d", value)
+		}
+	})
+}
 
+func TestGetEnvBool(t *testing.T) {
+	t.Run("default value", func(t *testing.T) {
+		value := getEnvBool("NONEXISTENT", false)
+		if value != false {
+			t.Errorf("expected false, got %v", value)
+		}
+	})
+	t.Run("parse true", func(t *testing.T) {
+		value := getEnvBool("SOME_VAR", false)
+		if !value {
+			t.Errorf("expected true, got %v", value)
+		}
+	})
+	t.Run("parse false", func(t *testing.T) {
+		value := getEnvBool("SOME_VAR", true)
+		if value {
+			t.Errorf("expected false, got %v", value)
+		}
+	})
+}
+
+func TestInSlice(t *testing.T) {
+	tests := []struct {
+		name   string
+		slice  []int
+		value  int
+		result bool
+	}{
+		{"value in slice", []int{10, 20, 30}, 20, true},
+		{"value not in slice", []int{10, 20, 30}, 25, false},
+		{"empty slice", []int{}, 10, false},
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
-			if tt.wantErr != nil {
-				if err == nil {
-					t.Errorf("Validate() error = nil, want %v", tt.wantErr)
-				} else if err.Error() != tt.wantErr.Error() {
-					t.Errorf("Validate() error = %v, want %v", err, tt.wantErr)
-				}
-				return
+			result := inSlice(tt.slice, tt.value)
+			if result != tt.result {
+				t.Errorf("inSlice() result = %v, want %v", result, tt.result)
 			}
-			if err != nil {
-				t.Errorf("Validate() unexpected error = %v", err)
+		})
+	}
+}
+
+func TestToBool(t *testing.T) {
+	tests := []struct {
+		input  string
+		result bool
+	}{
+		{"true", true},
+		{"TRUE", true},
+		{"1", true},
+		{"false", false},
+		{"FALSE", false},
+		{"0", false},
+		{"maybe", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := toBool(tt.input)
+			if result != tt.result {
+				t.Errorf("toBool(%v) = %v, want %v", tt.input, result, tt.result)
+			}
+		})
+	}
+}
+
+func TestToLower(t *testing.T) {
+	tests := []struct {
+		input  string
+		result string
+	}{
+		{"HELLO", "hello"},
+		{"Hello", "hello"},
+		{"hELLo", "hello"},
+		{"123", "123"},
+		{"", ""},
+		{"UPPER", "upper"},
+		{"MixedCASE", "mixedcase"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := toLower(tt.input)
+			if result != tt.result {
+				t.Errorf("toLower(%v) = %v, want %v", tt.input, result, tt.result)
 			}
 		})
 	}

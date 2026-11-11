@@ -117,6 +117,11 @@ Configuration is environment-based:
 | `MPESA_CALLBACK_URL` | `` | M-Pesa callback URL (required if PAYMENT_PROVIDER=mpesa) |
 | `MPESA_BASE_URL` | `` | M-Pesa API base URL (optional, defaults to https://sandbox.safaricom.co.ke) |
 | `MPESA_ALLOWED_CIDRS` | `` | Comma-separated list of allowed CIDRs for M-Pesa callbacks (required for production) |
+| `KIKAPU_RATE_LIMIT_CHECKOUT` | `10` | Rate limit for checkout endpoint (requests/min per key) |
+| `KIKAPU_RATE_LIMIT_ADMIN` | `120` | Rate limit for admin endpoints (requests/min per key) |
+| `KIKAPU_RATE_LIMIT_PUBLIC_READ` | `300` | Rate limit for public read endpoints (requests/min per IP) |
+| `KIKAPU_RATE_LIMIT_MAX_BYTES` | `1048576` | Maximum request body size (1 MiB default) |
+| `KIKAPU_RATE_LIMIT_TRUSTED_PROXIES` | `false` | Trust X-Forwarded-For header from proxies |
 
 ## Idempotency
 
@@ -393,8 +398,49 @@ curl -X DELETE http://localhost:8080/v1/admin/keys/key_abc123... \
 | 401 | `missing_key` | No `Authorization` header provided |
 | 401 | `invalid_key` | Key not found or invalid format |
 | 401 | `expired_key` | Key has expired |
-| 401 | `revoked_key` | Key has been revoked |
+- **401 | `revoked_key` | Key has been revoked |
 | 403 | `missing_scope` | Key lacks required scope (includes `required_scope` in response) |
+| 429 | `rate_limited` | Rate limit exceeded (includes `Retry-After` header) |
+| 413 | `request_too_large` | Request body exceeds limit |
+
+### Rate Limiting
+
+Kikapu implements token bucket rate limiting to prevent abuse and resource exhaustion. Rate limits are configurable per endpoint type.
+
+#### Configuration
+
+Environment variables:
+
+- `KIKAPU_RATE_LIMIT_CHECKOUT` - Maximum checkout requests per minute per API key (default: 10)
+- `KIKAPU_RATE_LIMIT_ADMIN` - Maximum admin requests per minute per API key (default: 120)
+- `KIKAPU_RATE_LIMIT_PUBLIC_READ` - Maximum public read requests per minute per IP address (default: 300)
+- `KIKAPU_RATE_LIMIT_MAX_BYTES` - Maximum request body size in bytes (default: 1048576 = 1 MiB)
+- `KIKAPU_RATE_LIMIT_TRUSTED_PROXIES` - Whether to trust X-Forwarded-For headers from proxies (default: false)
+
+#### Enforcement
+
+Rate limits are enforced:
+- **Checkout endpoint** (`POST /v1/checkout`) - Uses API key from `Authorization` header
+- **Admin endpoints** - Use API key from `Authorization` header
+- **Public read endpoints** - Use client IP address from `X-Real-IP` or `X-Forwarded-For`
+
+When rate limits are exceeded, clients receive `429 Too Many Requests` with a `Retry-After: 1` header indicating how long to wait before retrying.
+
+#### X-Forwarded-For Security
+
+The `X-Forwarded-For` header contains the client's original IP address and is set by reverse proxies or load balancers to indicate the real client IP. When `KIKAPU_RATE_LIMIT_TRUSTED_PROXIES=true`, Kikapu will:
+
+1. Check the `X-Forwarded-For` header for the client's original IP
+2. Use the last IP in the chain as the rate limit key
+3. Igloo the first untrusted IP before the last one
+
+**Security Note**: Always ensure your reverse proxies are configured to forward the correct `X-Forwarded-For` header with the client's original IP. Do not enable `KIKAPU_RATE_LIMIT_TRUSTED_PROXIES` unless you trust all upstream proxies to correctly set this header.
+
+#### Request Size Limits
+
+For JSON and upload endpoints (POST, PUT, PATCH), Kikapu enforces a maximum request body size of 1 MiB by default. Oversized requests receive `413 Request Entity Too Large`.
+
+File uploads (5 MiB max) should use multipart/form-data and are handled separately from JSON payload limits.
 
 ### Security Notes
 
