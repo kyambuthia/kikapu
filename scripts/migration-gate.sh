@@ -198,7 +198,8 @@ check_destructive_changes() {
     done
     
     if [ "$has_destructive" = true ]; then
-        error "Destructive changes detected without approval:\\n${destructive_files}Add '-- allow-drop: <reason>' comment header to approve destructive changes."
+        warn "Destructive changes detected without approval:\\n${destructive_files}Add '-- allow-drop: <reason>' comment header to approve destructive changes."
+        return 1
     fi
     
     info "No unauthorized destructive changes found"
@@ -283,7 +284,9 @@ run_migration_gate() {
     
     # Check for destructive changes if we have a previous state
     if [ -n "$previous_tag" ] && [ -d "${MIGRATIONS_DIR}" ]; then
-        check_destructive_changes "${MIGRATIONS_DIR}"
+        if ! check_destructive_changes "${MIGRATIONS_DIR}"; then
+            error "Destructive changes detected - see warnings above"
+        fi
     fi
     
     # Apply new migrations (would be any added after previous tag)
