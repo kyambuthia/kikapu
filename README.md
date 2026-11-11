@@ -101,98 +101,22 @@ Integration tests skip cleanly when `TEST_DATABASE_URL` is not set.
 
 Configuration is environment-based:
 
-| Variable | Default | Description |
+ | Variable | Default | Description |
 |----------|---------|-------------|
 | `KIKAPU_ADDR` | `:8080` | Address to listen on |
 | `KIKAPU_MODE` | `api` | Operation mode (api\|worker\|migrate) |
 | `KIKAPU_LOG_LEVEL` | `info` | Log level (debug\|info\|warn\|error) |
 | `DATABASE_URL` | `` | PostgreSQL connection string (required for api/migrate modes) |
 | `PAYMENT_PROVIDER` | `fake` | Payment provider (fake\|paystack\|mpesa) |
-| `PAYSTACK_SECRET_KEY` | `` | Paystack secret key (required if PAYMENT_PROVIDER=paystack) |
-| `PAYSTACK_BASE_URL` | `` | Paystack API base URL (optional, defaults to https://api.paystack.co) |
-| `MPESA_CONSUMER_KEY` | `` | M-Pesa Daraja consumer key (required if PAYMENT_PROVIDER=mpesa) |
-| `MPESA_CONSUMER_SECRET` | `` | M-Pesa Daraja consumer secret (required if PAYMENT_PROVIDER=mpesa) |
-| `MPESA_SHORT_CODE` | `` | M-Pesa business short code (required if PAYMENT_PROVIDER=mpesa) |
-| `MPESA_PASSKEY` | `` | M-Pesa passkey (required if PAYMENT_PROVIDER=mpesa) |
-| `MPESA_CALLBACK_URL` | `` | M-Pesa callback URL (required if PAYMENT_PROVIDER=mpesa) |
-| `MPESA_BASE_URL` | `` | M-Pesa API base URL (optional, defaults to https://sandbox.safaricom.co.ke) |
-| `MPESA_ALLOWED_CIDRS` | `` | Comma-separated list of allowed CIDRs for M-Pesa callbacks (required for production) |
-| `KIKAPU_RATE_LIMIT_CHECKOUT` | `10` | Rate limit for checkout endpoint (requests/min per key) |
-| `KIKAPU_RATE_LIMIT_ADMIN` | `120` | Rate limit for admin endpoints (requests/min per key) |
-| `KIKAPU_RATE_LIMIT_PUBLIC_READ` | `300` | Rate limit for public read endpoints (requests/min per IP) |
-| `KIKAPU_RATE_LIMIT_MAX_BYTES` | `1048576` | Maximum request body size (1 MiB default) |
-| `KIKAPU_RATE_LIMIT_TRUSTED_PROXIES` | `false` | Trust X-Forwarded-For header from proxies |
-
-## Idempotency
-
-All mutating endpoints support idempotency via the `Idempotency-Key` header. This ensures safe retries and prevents duplicate operations.
-
-### Header
-
-- **Name**: `Idempotency-Key`
-- **Required**: Yes, for all POST, PATCH, PUT, DELETE endpoints
-- **Format**: Any unique string (recommend UUID v4)
-- **Example**: `Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000`
-
-### Semantics
-
-| Scenario | Behavior |
-|----------|----------|
-| First request with key | Executes normally, stores response |
-| Same key + same request | Returns stored response (replay) |
-| Same key + different request | 409 Conflict |
-| Concurrent same-key requests | 409 Conflict with `Retry-After` |
-| Key older than 24h | Treated as new request |
-
-### Conflict Detection
-
-The idempotency system uses a SHA-256 hash of the request (method + path + body) to detect conflicts:
-
-- If the same key is reused with a **different** request, the system rejects it with `idempotency_conflict`
-- This prevents accidental key reuse across different operations
-
-### Expiration
-
-- Idempotency keys expire after **24 hours**
-- After expiration, the key can be reused for new operations
-- A background cleanup worker removes expired records hourly
-
-### Endpoints Requiring Idempotency
-
-- `POST /v1/checkout` - Place order
-- `POST /v1/orders/{id}/refund` - Refund order
-- `POST /v1/admin/products` - Create product
-- `PATCH /v1/admin/products/{id}` - Update product
-- `DELETE /v1/admin/products/{id}` - Delete product
-- `PUT /v1/admin/products/{id}/stock` - Update stock level
-
-### Example: Retry Behavior
-
-```bash
-# First request - succeeds
-curl -X POST http://localhost:8080/v1/checkout \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: my-unique-key-123" \
-  -d '{"cart_id": "cart_001"}'
-
-# Response: {"order_id": "ord_123", "status": "paid"}
-
-# Retry with same key + same body - returns cached response
-curl -X POST http://localhost:8080/v1/checkout \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: my-unique-key-123" \
-  -d '{"cart_id": "cart_001"}'
-
-# Response: {"order_id": "ord_123", "status": "paid"} (same order)
-
-# Different cart with same key - conflict
-curl -X POST http://localhost:8080/v1/checkout \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: my-unique-key-123" \
-  -d '{"cart_id": "cart_002"}'
-
-# Response: 409 Conflict
-```
+ | `PAYSTACK_SECRET_KEY` | `` | Paystack secret key (required if PAYMENT_PROVIDER=paystack) |
+ | `PAYSTACK_BASE_URL` | `` | Paystack API base URL (optional, defaults to https://api.paystack.co) |
+ | `MPESA_CONSUMER_KEY` | `` | M-Pesa Daraja consumer key (required if PAYMENT_PROVIDER=mpesa) |
+ | `MPESA_CONSUMER_SECRET` | `` | M-Pesa Daraja consumer secret (required if PAYMENT_PROVIDER=mpesa) |
+ | `MPESA_SHORT_CODE` | `` | M-Pesa business short code (required if PAYMENT_PROVIDER=mpesa) |
+ | `MPESA_PASSKEY` | `` | M-Pesa passkey (required if PAYMENT_PROVIDER=mpesa) |
+ | `MPESA_CALLBACK_URL` | `` | M-Pesa callback URL (required if PAYMENT_PROVIDER=mpesa) |
+ | `MPESA_BASE_URL` | `` | M-Pesa API base URL (optional, defaults to https://sandbox.safaricom.co.ke) |
+ | `MPESA_ALLOWED_CIDRS` | `` | Comma-separated list of allowed CIDRs for M-Pesa callbacks (required for production) |
 
 ## Database Schema
 
@@ -270,14 +194,6 @@ EOF
  | POST | `/v1/admin/keys` | Create API key (admin only) |
  | GET | `/v1/admin/keys` | List API keys (admin only) |
  | DELETE | `/v1/admin/keys/{id}` | Revoke API key (admin only) |
- | GET | `/v1/admin/products` | List products (admin only) |
- | POST | `/v1/admin/products` | Create product (admin only) |
- | GET | `/v1/admin/products/{id}` | Get product (admin only) |
- | PATCH | `/v1/admin/products/{id}` | Update product (admin only) |
- | DELETE | `/v1/admin/products/{id}` | Delete product (admin only) |
- | PUT | `/v1/admin/products/{id}/stock` | Update stock level (admin only) |
- | GET | `/v1/admin/orders` | List orders (admin only) |
- | GET | `/v1/admin/orders/{id}` | Get order (admin only) |
 
 ## API Key Authentication
 
@@ -296,55 +212,10 @@ API keys are scoped to specific permissions:
 | `products:read` | Read product catalog |
 | `orders:read` | Read order information |
 | `orders:write` | Create and modify orders |
- | `stock:read` | Read inventory levels |
- | `stock:write` | Modify inventory |
- | `admin:read` | Read admin data |
- | `admin:write` | Perform admin operations |
-
-### Creating API Keys
-
-Create a new API key:
-
-```bash
-curl -X POST http://localhost:8080/v1/admin/keys \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer kik_admin_key" \
-  -d '{
-    "name": "Integration Key",
-    "scopes": ["products:read", "orders:write"]
-  }'
-```
-
-Response:
-```json
-{
-  "id": "key_abc123...",
-  "name": "Integration Key",
-  "prefix": "kik_abc1",
-  "key": "kik_abc123def456...",
-  "scopes": ["products:read", "orders:write"]
-}
-```
-
-**Important**: The `key` field is shown **only once** when created. Store it securely; only the SHA-256 hash is stored.
-
-## Admin API
-
-The admin API provides a storefront-safe interface for managing products, variants, prices, and stock. Unlike the public storefront API, the admin API exposes internal IDs, stock counts by location, and enables mutation operations.
-
-### Admin Scopes
-
-Admin endpoints require specific scopes:
-
-| Endpoint | Required Scope |
-|----------|---------------|
-| GET /v1/admin/products | `admin:read` |
-| POST /v1/admin/products | `admin:write` |
-| PATCH /v1/admin/products/{id} | `admin:write` |
-| DELETE /v1/admin/products/{id} | `admin:write` |
-| PUT /v1/admin/products/{id}/stock | `admin:write` |
-| GET /v1/admin/orders | `admin:read` |
-| GET /v1/admin/orders/{id} | `admin:read` |
+| `stock:read` | Read inventory levels |
+| `stock:write` | Modify inventory |
+| `admin:read` | Read admin data |
+| `admin:write` | Perform admin operations |
 
 ### Creating API Keys
 
@@ -398,49 +269,8 @@ curl -X DELETE http://localhost:8080/v1/admin/keys/key_abc123... \
 | 401 | `missing_key` | No `Authorization` header provided |
 | 401 | `invalid_key` | Key not found or invalid format |
 | 401 | `expired_key` | Key has expired |
-- **401 | `revoked_key` | Key has been revoked |
+| 401 | `revoked_key` | Key has been revoked |
 | 403 | `missing_scope` | Key lacks required scope (includes `required_scope` in response) |
-| 429 | `rate_limited` | Rate limit exceeded (includes `Retry-After` header) |
-| 413 | `request_too_large` | Request body exceeds limit |
-
-### Rate Limiting
-
-Kikapu implements token bucket rate limiting to prevent abuse and resource exhaustion. Rate limits are configurable per endpoint type.
-
-#### Configuration
-
-Environment variables:
-
-- `KIKAPU_RATE_LIMIT_CHECKOUT` - Maximum checkout requests per minute per API key (default: 10)
-- `KIKAPU_RATE_LIMIT_ADMIN` - Maximum admin requests per minute per API key (default: 120)
-- `KIKAPU_RATE_LIMIT_PUBLIC_READ` - Maximum public read requests per minute per IP address (default: 300)
-- `KIKAPU_RATE_LIMIT_MAX_BYTES` - Maximum request body size in bytes (default: 1048576 = 1 MiB)
-- `KIKAPU_RATE_LIMIT_TRUSTED_PROXIES` - Whether to trust X-Forwarded-For headers from proxies (default: false)
-
-#### Enforcement
-
-Rate limits are enforced:
-- **Checkout endpoint** (`POST /v1/checkout`) - Uses API key from `Authorization` header
-- **Admin endpoints** - Use API key from `Authorization` header
-- **Public read endpoints** - Use client IP address from `X-Real-IP` or `X-Forwarded-For`
-
-When rate limits are exceeded, clients receive `429 Too Many Requests` with a `Retry-After: 1` header indicating how long to wait before retrying.
-
-#### X-Forwarded-For Security
-
-The `X-Forwarded-For` header contains the client's original IP address and is set by reverse proxies or load balancers to indicate the real client IP. When `KIKAPU_RATE_LIMIT_TRUSTED_PROXIES=true`, Kikapu will:
-
-1. Check the `X-Forwarded-For` header for the client's original IP
-2. Use the last IP in the chain as the rate limit key
-3. Igloo the first untrusted IP before the last one
-
-**Security Note**: Always ensure your reverse proxies are configured to forward the correct `X-Forwarded-For` header with the client's original IP. Do not enable `KIKAPU_RATE_LIMIT_TRUSTED_PROXIES` unless you trust all upstream proxies to correctly set this header.
-
-#### Request Size Limits
-
-For JSON and upload endpoints (POST, PUT, PATCH), Kikapu enforces a maximum request body size of 1 MiB by default. Oversized requests receive `413 Request Entity Too Large`.
-
-File uploads (5 MiB max) should use multipart/form-data and are handled separately from JSON payload limits.
 
 ### Security Notes
 
@@ -449,242 +279,6 @@ File uploads (5 MiB max) should use multipart/form-data and are handled separate
 - Logs show only the key prefix (first 8 characters), never the full key
 - Constant-time comparison prevents timing attacks
 - `RevokedAt` takes precedence over `ExpiresAt`
-
-## Admin API Examples
-
-### Create a Product
-
-Create a new product with variants. Requires `Idempotency-Key` header for exactly-once semantics:
-
-```bash
-curl -X POST http://localhost:8080/v1/admin/products \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer kik_admin_key" \
-  -H "Idempotency-Key: unique-request-key-12345" \
-  -d '{
-    "slug": "wireless-keyboard",
-    "name": "Wireless Keyboard",
-    "status": "draft",
-    "variants": [
-      {
-        "sku": "WK-BLK-US",
-        "price": 7999,
-        "currency": "USD"
-      },
-      {
-        "sku": "WK-WHT-US",
-        "price": 7999,
-        "currency": "USD"
-      }
-    ]
-  }'
-```
-
-Response (201 Created):
-```json
-{
-  "id": "prod_abc123...",
-  "slug": "wireless-keyboard",
-  "name": "Wireless Keyboard",
-  "status": "draft",
-  "variants": [
-    {
-      "id": "var_001",
-      "product_id": "prod_abc123...",
-      "sku": "WK-BLK-US",
-      "price": {"Value": 7999, "Currency": "USD"},
-      "created_at": "2024-01-15T10:30:00Z",
-      "updated_at": "2024-01-15T10:30:00Z"
-    },
-    {
-      "id": "var_002",
-      "product_id": "prod_abc123...",
-      "sku": "WK-WHT-US",
-      "price": {"Value": 7999, "Currency": "USD"},
-      "created_at": "2024-01-15T10:30:00Z",
-      "updated_at": "2024-01-15T10:30:00Z"
-    }
-  ],
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T10:30:00Z"
-}
-```
-
-#### Idempotency Behavior
-
-- Same `Idempotency-Key` + same request → same response (replay returns the original product)
-- Concurrent requests with same key → guaranteed single product creation
-- Idempotency prevents duplicate products even under concurrent access
-
-### Validation Errors
-
-Invalid requests return a 400 with field-level errors:
-
-```json
-{
-  "error": {
-    "code": "validation_error",
-    "message": "validation failed",
-    "fields": {
-      "slug": "invalid slug",
-      "variants[0].price": "price cannot be negative"
-    }
-  }
-}
-```
-
-Common validation errors:
-
-| Field | Error | Description |
-|-------|-------|-------------|
-| `slug` | `invalid slug` | Must be lowercase alphanumeric with hyphens, 1-80 chars |
-| `name` | `name cannot be empty` | Required field |
-| `status` | `status must be draft or published` | Only `draft` or `published` allowed on create |
-| `variants[i].sku` | `SKU cannot be empty` | Required field |
-| `variants[i].price` | `price cannot be negative` | Must be >= 0 |
-| `variants[i].currency` | `currency must be a valid ISO-4217 code` | Must be 3 uppercase letters |
-| `variants[i].sku` | `duplicate SKU` | SKU already exists in product |
-
-### Update a Product
-
-Update product details and variants:
-
-```bash
-curl -X PATCH http://localhost:8080/v1/admin/products/prod_abc123 \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer kik_admin_key" \
-  -d '{
-    "slug": "wireless-keyboard-pro",
-    "name": "Wireless Keyboard Pro",
-    "status": "published",
-    "variants": [
-      {
-        "sku": "WK-BLK-US",
-        "price": 8999,
-        "currency": "USD"
-      }
-    ]
-  }'
-```
-
-**Note**: Updating variants replaces all variants. Include all variants you want to keep.
-
-### Delete a Product (Soft Delete)
-
-Deleting a product sets its status to `archived`. It will no longer appear in storefront listings but remains in the database for order history.
-
-```bash
-curl -X DELETE http://localhost:8080/v1/admin/products/prod_abc123 \
-  -H "Authorization: Bearer kik_admin_key"
-```
-
-#### Delete Constraints
-
-- **409 Conflict**: Cannot delete a product with existing orders. Returns:
-  ```json
-  {
-    "error": {
-      "code": "product_in_use",
-      "message": "cannot delete product with existing orders"
-    }
-  }
-  ```
-
-### Update Stock Levels
-
-Set stock level for a variant at a specific location:
-
-```bash
-curl -X PUT http://localhost:8080/v1/admin/products/var_001/stock \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer kik_admin_key" \
-  -d '{
-    "location_id": "warehouse-us-east",
-    "on_hand": 150
-  }'
-```
-
-Response:
-```json
-{
-  "variant_id": "var_001",
-  "location_id": "warehouse-us-east",
-  "on_hand": 150,
-  "reserved": 10
-}
-```
-
-#### Stock Validation
-
-- **Negative `on_hand`**: Returns 400 validation error
-- **Insufficient stock**: If `on_hand` < `reserved`, returns 400:
-  ```json
-  {
-    "error": {
-      "code": "insufficient_stock",
-      "message": "on_hand (50) cannot be less than reserved (100)"
-    }
-  }
-  ```
-
-The `Available()` calculation (`on_hand - reserved`) gives the sellable quantity visible to the storefront.
-
-### List Products (Admin)
-
-List products with pagination and filtering:
-
-```bash
-curl -X GET "http://localhost:8080/v1/admin/products?status=published&limit=20" \
-  -H "Authorization: Bearer kik_admin_key"
-```
-
-Query parameters:
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `status` | string | Filter by status: `draft`, `published`, or `archived` |
-| `limit` | integer | Max results (1-100, default: 20) |
-| `cursor` | string | Pagination cursor from previous response |
-
-Response:
-```json
-{
-  "data": [
-    {
-      "id": "prod_abc123",
-      "slug": "wireless-keyboard",
-      "name": "Wireless Keyboard",
-      "status": "published",
-      "variants": [...]
-    }
-  ],
-  "next_cursor": "eyJpZCI6InByb2RfYWJjMTIzIn0="
-}
-```
-
-### Admin Order Endpoints
-
-List and retrieve orders for admin purposes:
-
-```bash
-# List orders with filters
-curl -X GET "http://localhost:8080/v1/admin/orders?status=confirmed&from=2024-01-01T00:00:00Z" \
-  -H "Authorization: Bearer kik_admin_key"
-
-# Get single order
-curl -X GET http://localhost:8080/v1/admin/orders/ord_123 \
-  -H "Authorization: Bearer kik_admin_key"
-```
-
-Query parameters for listing orders:
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `status` | string | Filter by order status |
-| `from` | RFC3339 timestamp | Filter orders from this time |
-| `to` | RFC3339 timestamp | Filter orders to this time |
-| `limit` | integer | Max results (1-100, default: 20) |
-| `cursor` | string | Pagination cursor |
 
 ## Products API Examples
 
@@ -922,35 +516,10 @@ Response:
 
 #### Idempotency Behavior
 
-- Same `Idempotency-Key` + same request → same response (replay returns the original response)
-- Same `Idempotency-Key` + different request → 409 Conflict (key reused with different payload)
-- Concurrent requests with same key → 409 Conflict with `Retry-After` header (request in flight)
-- Idempotency records expire after 24 hours
-- Expired records are cleaned up by a background worker
-
-#### Idempotency Error Responses
-
-**Key reused with different request (409 Conflict):**
-```json
-{
-  "error": {
-    "code": "idempotency_conflict",
-    "message": "This idempotency key was already used with a different request"
-  }
-}
-```
-
-**Request in flight (409 Conflict):**
-```json
-{
-  "error": {
-    "code": "request_in_flight",
-    "message": "A request with this idempotency key is already being processed. Retry after the indicated time."
-  }
-}
-```
-
-The response includes a `Retry-After: 30` header indicating when to retry.
+- Same `Idempotency-Key` + same cart → same order returned
+- Concurrent requests with same key → guaranteed single order creation
+- Idempotency prevents duplicate charges even under concurrent access
+- Cart is cleared after successful order
 
 #### Error Cases
 
@@ -1537,3 +1106,156 @@ Use `"*"` as an event type to subscribe to all events.
 ## License
 
 MIT
+
+## Observability
+
+Kikapu is production-ready with built-in metrics, tracing, and structured logging.
+
+### Metrics
+
+Metrics are exposed on a **separate HTTP endpoint** (default: `:9090`) to avoid exposing internal metrics on the public API port.
+
+#### Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `KIKAPU_METRICS_ADDR` | `:9090` | Address for metrics endpoint |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | "" | OpenTelemetry collector endpoint (optional) |
+
+#### Available Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `kikapu_http_requests_total` | Counter | `route`, `method`, `status` | Total HTTP requests |
+| `kikapu_http_request_duration_seconds` | Histogram | `route` | Request duration in seconds |
+| `kikapu_checkout_total` | Counter | `result` | Checkout operations |
+
+#### Metric Labels
+
+**Route Label**: Uses the **route pattern** (e.g., `/v1/products/{slug}`), never the raw path, to keep cardinality bounded.
+
+**Checkout Result Labels**:
+- `success`: Order successfully placed
+- `declined`: Payment declined
+- `stock_conflict`: Insufficient inventory
+- `error`: Other errors
+
+#### Example Queries
+
+```promql
+# Request rate by route
+rate(kikapu_http_requests_total[5m])
+
+# 99th percentile latency for product endpoints
+histogram_quantile(0.99, 
+  rate(kikapu_http_request_duration_seconds_bucket{route="/v1/products/{slug}"}[5m])
+)
+
+# Checkout success rate
+sum(rate(kikapu_checkout_total{result="success"}[5m])) 
+  / 
+sum(rate(kikapu_checkout_total[5m]))
+```
+
+#### Accessing Metrics
+
+```bash
+curl http://localhost:9090/metrics
+```
+
+Metrics are served in **Prometheus text exposition format**.
+
+### Logging
+
+All logs are structured JSON with the following fields:
+
+| Field | Description |
+|-------|-------------|
+| `request_id` | Unique request identifier |
+| `route` | Route pattern (not raw path) |
+| `method` | HTTP method |
+| `status` | HTTP status code |
+| `duration_ms` | Request duration in milliseconds |
+| `error_code` | Error code (if applicable) |
+
+**Log Redaction**: Phone numbers and other PII are automatically redacted:
+- `+254712345678` → `+254******678`
+- Never logs: request bodies, headers, tokens, full phone numbers, PAN-like strings
+
+Example log entry:
+```json
+{
+  "time": "2024-01-15T10:30:00Z",
+  "level": "INFO",
+  "msg": "request",
+  "request_id": "abc123def456",
+  "route": "/v1/products/{slug}",
+  "method": "GET",
+  "status": 200,
+  "duration_ms": 12
+}
+```
+
+### Distributed Tracing
+
+OpenTelemetry tracing is supported (optional):
+
+#### Setup
+
+Set the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable to enable tracing:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317
+./kikapu --addr :8080
+```
+
+When not set, tracing is a no-op (zero overhead).
+
+#### Features
+
+- **Service name**: `kikapu`
+- **Propagation**: W3C TraceContext + Baggage
+- **Sampler**: Always sample (production should configure appropriately)
+- **Export**: OTLP/gRPC (compatible with Jaeger, Zipkin, and other OTLP collectors)
+
+### Log Schema
+
+Every log entry contains:
+
+1. **Timestamp** (ISO 8601)
+2. **Level** (debug, info, warn, error)
+3. **Message** (human-readable)
+4. **Structured fields** (key-value pairs)
+
+**Never logged**:
+- Request/response bodies
+- HTTP headers
+- Authentication tokens
+- Phone numbers (redacted)
+- Payment card data (PAN)
+
+### Metrics Best Practices
+
+1. **Separate endpoint**: Metrics on `:9090`, API on `:8080`
+2. **Bounded cardinality**: Route labels use patterns, not raw paths
+3. **Histogram buckets**: Pre-configured for API latency (5ms to 2.5s)
+4. **Checkout tracking**: Every checkout emits a metric exactly once
+
+### Example Prometheus Scraping
+
+```yaml
+scrape_configs:
+  - job_name: 'kikapu'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: /metrics
+```
+
+### Health Checks
+
+Two endpoints for health checking:
+
+- **`/healthz`** (metrics port): Basic health check
+- **`/readyz`** (API port): Readiness check
+
+Use `/healthz` for orchestrator health checks and `/readyz` for traffic routing decisions.

@@ -10,13 +10,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kyambuthia/kikapu/internal/fulfillment"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 )
 
 type Handler struct {
-	productRepo ProductRepository
-	stockRepo   StockRepository
-	orderStore  OrderLister
+	productRepo    ProductRepository
+	stockRepo      StockRepository
+	orderStore     OrderLister
+	fulfillmentSvc *fulfillment.Service
 }
 
 type OrderLister interface {
@@ -49,6 +51,10 @@ func NewHandler(productRepo ProductRepository, stockRepo StockRepository) *Handl
 	}
 }
 
+func (h *Handler) SetFulfillmentService(svc *fulfillment.Service) {
+	h.fulfillmentSvc = svc
+}
+
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/admin/products", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -62,7 +68,68 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("/v1/admin/products/", h.handleProduct)
 	mux.HandleFunc("/v1/admin/orders", h.listOrders)
-	mux.HandleFunc("/v1/admin/orders/", h.getOrder)
+	mux.HandleFunc("/v1/admin/orders/", h.handleOrders)
+}
+
+func (h *Handler) handleOrders(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	if !strings.HasPrefix(path, "/v1/admin/orders/") {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found", httpx.RequestID(r))
+		return
+	}
+
+	remaining := strings.TrimPrefix(path, "/v1/admin/orders/")
+	parts := strings.SplitN(remaining, "/", 3)
+
+	orderID := parts[0]
+	if orderID == "" {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found", httpx.RequestID(r))
+		return
+	}
+
+	if len(parts) == 1 {
+		if r.Method == http.MethodGet {
+			h.getOrder(w, r, orderID)
+		} else {
+			httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
+		}
+		return
+	}
+
+	if parts[1] == "fulfillments" {
+		if h.fulfillmentSvc == nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "fulfillment service not configured", httpx.RequestID(r))
+			return
+		}
+
+		if len(parts) == 2 {
+			if r.Method == http.MethodPost {
+				h.createFulfillment(w, r, orderID)
+			} else {
+				httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
+			}
+			return
+		}
+
+		parts = strings.SplitN(parts[2], "/", 2)
+		if len(parts) >= 1 {
+			fulfillmentID := parts[0]
+			if len(parts) == 1 {
+				h.handleFulfillment(w, r, fulfillmentID)
+			} else if parts[1] == "tracking" {
+				if r.Method == http.MethodPost {
+					h.addTracking(w, r, fulfillmentID)
+				} else {
+					httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
+				}
+			} else {
+				httpx.WriteError(w, http.StatusNotFound, "not_found", "not found", httpx.RequestID(r))
+			}
+		}
+		return
+	}
+
+	httpx.WriteError(w, http.StatusNotFound, "not_found", "not found", httpx.RequestID(r))
 }
 
 func (h *Handler) listProducts(w http.ResponseWriter, r *http.Request) {
@@ -389,26 +456,9 @@ func (h *Handler) listOrders(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, response)
 }
 
-func (h *Handler) getOrder(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
-		return
-	}
-
+func (h *Handler) getOrder(w http.ResponseWriter, r *http.Request, id string) {
 	if h.orderStore == nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "order store not configured", httpx.RequestID(r))
-		return
-	}
-
-	path := r.URL.Path
-	if !strings.HasPrefix(path, "/v1/admin/orders/") {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found", httpx.RequestID(r))
-		return
-	}
-
-	id := strings.TrimPrefix(path, "/v1/admin/orders/")
-	if id == "" {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found", httpx.RequestID(r))
 		return
 	}
 
@@ -436,4 +486,163 @@ func (h *Handler) writeValidationError(w http.ResponseWriter, r *http.Request, v
 	}
 
 	httpx.WriteJSON(w, http.StatusBadRequest, envelope)
+}
+
+func (h *Handler) createFulfillment(w http.ResponseWriter, r *http.Request, orderID string) {
+	idempotencyKey := r.Header.Get("Idempotency-Key")
+	if idempotencyKey == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "missing_idempotency_key", "Idempotency-Key header is required", httpx.RequestID(r))
+		return
+	}
+
+	var input struct {
+		Items []fulfillment.Item `json:"items"`
+	}
+
+	if err := httpx.ReadJSON(r, &input); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body", httpx.RequestID(r))
+		return
+	}
+
+	if len(input.Items) == 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "items cannot be empty", httpx.RequestID(r))
+		return
+	}
+
+	ctx := r.Context()
+	f, err := h.fulfillmentSvc.CreateFulfillment(ctx, orderID, input.Items)
+	if err != nil {
+		if errors.Is(err, fulfillment.ErrOrderNotConfirmed) {
+			httpx.WriteError(w, http.StatusBadRequest, "order_not_confirmed", err.Error(), httpx.RequestID(r))
+			return
+		}
+		if errors.Is(err, fulfillment.ErrOverFulfillment) {
+			httpx.WriteError(w, http.StatusBadRequest, "over_fulfillment", err.Error(), httpx.RequestID(r))
+			return
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteError(w, http.StatusNotFound, "order_not_found", "order not found", httpx.RequestID(r))
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusCreated, f)
+}
+
+func (h *Handler) handleFulfillment(w http.ResponseWriter, r *http.Request, fulfillmentID string) {
+	switch r.Method {
+	case http.MethodGet:
+		h.getFulfillment(w, r, fulfillmentID)
+	case http.MethodPatch:
+		h.updateFulfillmentStatus(w, r, fulfillmentID)
+	default:
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
+	}
+}
+
+func (h *Handler) getFulfillment(w http.ResponseWriter, r *http.Request, fulfillmentID string) {
+	ctx := r.Context()
+	f, err := h.fulfillmentSvc.Get(ctx, fulfillmentID)
+	if err != nil {
+		if errors.Is(err, fulfillment.ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "fulfillment_not_found", "fulfillment not found", httpx.RequestID(r))
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, f)
+}
+
+func (h *Handler) updateFulfillmentStatus(w http.ResponseWriter, r *http.Request, fulfillmentID string) {
+	var input struct {
+		Status string `json:"status"`
+	}
+
+	if err := httpx.ReadJSON(r, &input); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body", httpx.RequestID(r))
+		return
+	}
+
+	if input.Status == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "status is required", httpx.RequestID(r))
+		return
+	}
+
+	status := fulfillment.Status(input.Status)
+	if !status.IsValid() {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_status", "invalid status", httpx.RequestID(r))
+		return
+	}
+
+	ctx := r.Context()
+	if err := h.fulfillmentSvc.TransitionStatus(ctx, fulfillmentID, status); err != nil {
+		if errors.Is(err, fulfillment.ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "fulfillment_not_found", "fulfillment not found", httpx.RequestID(r))
+			return
+		}
+		if errors.Is(err, fulfillment.ErrInvalidTransition) {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_transition", err.Error(), httpx.RequestID(r))
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
+		return
+	}
+
+	f, err := h.fulfillmentSvc.Get(ctx, fulfillmentID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, f)
+}
+
+func (h *Handler) addTracking(w http.ResponseWriter, r *http.Request, fulfillmentID string) {
+	var input struct {
+		Carrier string `json:"carrier"`
+		Number  string `json:"number"`
+		URL     string `json:"url"`
+	}
+
+	if err := httpx.ReadJSON(r, &input); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body", httpx.RequestID(r))
+		return
+	}
+
+	if input.Carrier == "" || input.Number == "" || input.URL == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "carrier, number, and url are required", httpx.RequestID(r))
+		return
+	}
+
+	tracking := fulfillment.Tracking{
+		Carrier: input.Carrier,
+		Number:  input.Number,
+		URL:     input.URL,
+	}
+
+	ctx := r.Context()
+	if err := h.fulfillmentSvc.AddTracking(ctx, fulfillmentID, tracking); err != nil {
+		if errors.Is(err, fulfillment.ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "fulfillment_not_found", "fulfillment not found", httpx.RequestID(r))
+			return
+		}
+		if errors.Is(err, fulfillment.ErrInvalidTrackingURL) {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_tracking_url", err.Error(), httpx.RequestID(r))
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
+		return
+	}
+
+	f, err := h.fulfillmentSvc.Get(ctx, fulfillmentID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, f)
 }

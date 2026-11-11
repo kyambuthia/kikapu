@@ -2,22 +2,18 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/kyambuthia/kikapu/internal/cart"
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/checkout"
-	"github.com/kyambuthia/kikapu/internal/idempotency"
 	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/migrate"
 	"github.com/kyambuthia/kikapu/internal/outbox"
@@ -29,7 +25,6 @@ import (
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
 	"github.com/kyambuthia/kikapu/internal/routes"
 	"github.com/kyambuthia/kikapu/internal/worker"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -89,27 +84,6 @@ func main() {
 		return
 	}
 
-	var db *sql.DB
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL != "" {
-		var err error
-		db, err = sql.Open("postgres", databaseURL)
-		if err != nil {
-			logger.Error("failed to connect to database", "error", err)
-			os.Exit(1)
-		}
-		defer db.Close()
-		db.SetMaxOpenConns(10)
-		db.SetMaxIdleConns(5)
-	}
-
-	var idempotencyStore idempotency.Store
-	if db != nil {
-		idempotencyStore = idempotency.NewPostgresStore(db)
-	} else {
-		idempotencyStore = &inMemoryIdempotencyStore{records: make(map[string]*inMemoryIdempotencyRecord)}
-	}
-
 	productData, err := os.ReadFile("internal/catalog/testdata/products.json")
 	if err != nil {
 		logger.Error("failed to read products data", "error", err)
@@ -164,9 +138,8 @@ func main() {
 	}
 
 	eventOutbox := outbox.NewInMemoryOutbox()
-	_ = idempotencyStore
-	checkoutIdempotencyStore := checkout.NewIdempotencyStore()
-	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, checkoutIdempotencyStore, eventOutbox)
+	idempotencyStore := checkout.NewIdempotencyStore()
+	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
 
 	subscriberStore := worker.NewInMemorySubscriberStore()
 	httpClient := &http.Client{
@@ -177,49 +150,29 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	go deliverer.Run(workerCtx, 5*time.Second)
 
-	if pgStore, ok := idempotencyStore.(*idempotency.PostgresStore); ok {
-		go func() {
-			ticker := time.NewTicker(1 * time.Hour)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-workerCtx.Done():
-					return
-				case <-ticker.C:
-					if err := pgStore.Cleanup(workerCtx); err != nil {
-						logger.Error("idempotency cleanup failed", "error", err)
-					}
-				}
-			}
-		}()
-	}
-
 	cartHandler := routes.NewCartHandler(cartStore, checkoutSvc)
-	
+
 	mux := http.NewServeMux()
-	
+
 	catalogHandler.RegisterRoutes(mux)
 	cartHandler.RegisterRoutes(mux)
-	
+
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	
+
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	
+
 	mux.HandleFunc("/v1/version", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{
 			"version": version,
 			"commit":  commit,
 		})
 	})
-	
-	handler := obs.NewMiddleware(obs.MiddlewareOptions{
-		Logger:         logger,
-		RequestTracker: requestTracker,
-	})(httpx.RequestIDMiddleware(mux))
+
+	handler := httpx.LoggingMiddleware(logger)(httpx.RequestIDMiddleware(mux))
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
@@ -256,79 +209,4 @@ func main() {
 	}
 
 	logger.Info("server stopped")
-}
-
-type inMemoryIdempotencyRecord struct {
-	requestHash string
-	status      int
-	response    []byte
-	createdAt   time.Time
-	expiresAt   time.Time
-}
-
-type inMemoryIdempotencyStore struct {
-	mu      sync.RWMutex
-	records map[string]*inMemoryIdempotencyRecord
-}
-
-func (s *inMemoryIdempotencyStore) Begin(ctx context.Context, key, requestHash string) (idempotency.Record, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if rec, ok := s.records[key]; ok {
-		if time.Now().After(rec.expiresAt) {
-			delete(s.records, key)
-			s.records[key] = &inMemoryIdempotencyRecord{
-				requestHash: requestHash,
-				createdAt:   time.Now(),
-				expiresAt:   time.Now().Add(24 * time.Hour),
-			}
-			return idempotency.Record{Key: key, RequestHash: requestHash}, false, nil
-		}
-		if rec.requestHash != requestHash {
-			return idempotency.Record{}, false, idempotency.ErrConflict
-		}
-		if rec.response == nil {
-			return idempotency.Record{}, false, idempotency.ErrInFlight
-		}
-		return idempotency.Record{
-			Key:         key,
-			RequestHash: requestHash,
-			Status:      rec.status,
-			Response:    rec.response,
-			CreatedAt:   rec.createdAt,
-			ExpiresAt:   rec.expiresAt,
-		}, true, nil
-	}
-
-	s.records[key] = &inMemoryIdempotencyRecord{
-		requestHash: requestHash,
-		createdAt:   time.Now(),
-		expiresAt:   time.Now().Add(24 * time.Hour),
-	}
-	return idempotency.Record{Key: key, RequestHash: requestHash}, false, nil
-}
-
-func (s *inMemoryIdempotencyStore) Finish(ctx context.Context, key string, status int, body []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if rec, ok := s.records[key]; ok {
-		rec.status = status
-		rec.response = body
-	}
-	return nil
-}
-
-func (s *inMemoryIdempotencyStore) Cleanup(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now()
-	for key, rec := range s.records {
-		if now.After(rec.expiresAt) {
-			delete(s.records, key)
-		}
-	}
-	return nil
 }
