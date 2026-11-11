@@ -6,6 +6,8 @@ A headless commerce engine in Go - single binary, Postgres backend, REST API wit
 
 Kikapu is designed as a lightweight, single-binary commerce engine that can run in API or worker mode. It uses PostgreSQL for persistence and exposes a RESTful API.
 
+**Documentation**: [Architecture](docs/ARCHITECTURE.md) | [Roadmap](docs/ROADMAP.md) | [Engineering Standards](docs/STANDARDS.md)
+
 ## Features
 
 - Single binary deployment
