@@ -1106,3 +1106,156 @@ Use `"*"` as an event type to subscribe to all events.
 ## License
 
 MIT
+
+## Observability
+
+Kikapu is production-ready with built-in metrics, tracing, and structured logging.
+
+### Metrics
+
+Metrics are exposed on a **separate HTTP endpoint** (default: `:9090`) to avoid exposing internal metrics on the public API port.
+
+#### Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `KIKAPU_METRICS_ADDR` | `:9090` | Address for metrics endpoint |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | "" | OpenTelemetry collector endpoint (optional) |
+
+#### Available Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `kikapu_http_requests_total` | Counter | `route`, `method`, `status` | Total HTTP requests |
+| `kikapu_http_request_duration_seconds` | Histogram | `route` | Request duration in seconds |
+| `kikapu_checkout_total` | Counter | `result` | Checkout operations |
+
+#### Metric Labels
+
+**Route Label**: Uses the **route pattern** (e.g., `/v1/products/{slug}`), never the raw path, to keep cardinality bounded.
+
+**Checkout Result Labels**:
+- `success`: Order successfully placed
+- `declined`: Payment declined
+- `stock_conflict`: Insufficient inventory
+- `error`: Other errors
+
+#### Example Queries
+
+```promql
+# Request rate by route
+rate(kikapu_http_requests_total[5m])
+
+# 99th percentile latency for product endpoints
+histogram_quantile(0.99, 
+  rate(kikapu_http_request_duration_seconds_bucket{route="/v1/products/{slug}"}[5m])
+)
+
+# Checkout success rate
+sum(rate(kikapu_checkout_total{result="success"}[5m])) 
+  / 
+sum(rate(kikapu_checkout_total[5m]))
+```
+
+#### Accessing Metrics
+
+```bash
+curl http://localhost:9090/metrics
+```
+
+Metrics are served in **Prometheus text exposition format**.
+
+### Logging
+
+All logs are structured JSON with the following fields:
+
+| Field | Description |
+|-------|-------------|
+| `request_id` | Unique request identifier |
+| `route` | Route pattern (not raw path) |
+| `method` | HTTP method |
+| `status` | HTTP status code |
+| `duration_ms` | Request duration in milliseconds |
+| `error_code` | Error code (if applicable) |
+
+**Log Redaction**: Phone numbers and other PII are automatically redacted:
+- `+254712345678` → `+254******678`
+- Never logs: request bodies, headers, tokens, full phone numbers, PAN-like strings
+
+Example log entry:
+```json
+{
+  "time": "2024-01-15T10:30:00Z",
+  "level": "INFO",
+  "msg": "request",
+  "request_id": "abc123def456",
+  "route": "/v1/products/{slug}",
+  "method": "GET",
+  "status": 200,
+  "duration_ms": 12
+}
+```
+
+### Distributed Tracing
+
+OpenTelemetry tracing is supported (optional):
+
+#### Setup
+
+Set the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable to enable tracing:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317
+./kikapu --addr :8080
+```
+
+When not set, tracing is a no-op (zero overhead).
+
+#### Features
+
+- **Service name**: `kikapu`
+- **Propagation**: W3C TraceContext + Baggage
+- **Sampler**: Always sample (production should configure appropriately)
+- **Export**: OTLP/gRPC (compatible with Jaeger, Zipkin, and other OTLP collectors)
+
+### Log Schema
+
+Every log entry contains:
+
+1. **Timestamp** (ISO 8601)
+2. **Level** (debug, info, warn, error)
+3. **Message** (human-readable)
+4. **Structured fields** (key-value pairs)
+
+**Never logged**:
+- Request/response bodies
+- HTTP headers
+- Authentication tokens
+- Phone numbers (redacted)
+- Payment card data (PAN)
+
+### Metrics Best Practices
+
+1. **Separate endpoint**: Metrics on `:9090`, API on `:8080`
+2. **Bounded cardinality**: Route labels use patterns, not raw paths
+3. **Histogram buckets**: Pre-configured for API latency (5ms to 2.5s)
+4. **Checkout tracking**: Every checkout emits a metric exactly once
+
+### Example Prometheus Scraping
+
+```yaml
+scrape_configs:
+  - job_name: 'kikapu'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: /metrics
+```
+
+### Health Checks
+
+Two endpoints for health checking:
+
+- **`/healthz`** (metrics port): Basic health check
+- **`/readyz`** (API port): Readiness check
+
+Use `/healthz` for orchestrator health checks and `/readyz` for traffic routing decisions.
