@@ -6,16 +6,22 @@ import (
 )
 
 type Config struct {
-	Addr     string
-	Mode     string
-	LogLevel string
+	Addr              string
+	Mode              string
+	LogLevel          string
+	PaymentProvider   string
+	PaystackSecretKey string
+	PaystackBaseURL   string
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Addr:     getEnv("KIKAPU_ADDR", ":8080"),
-		Mode:     getEnv("KIKAPU_MODE", "api"),
-		LogLevel: getEnv("KIKAPU_LOG_LEVEL", "info"),
+		Addr:              getEnv("KIKAPU_ADDR", ":8080"),
+		Mode:              getEnv("KIKAPU_MODE", "api"),
+		LogLevel:          getEnv("KIKAPU_LOG_LEVEL", "info"),
+		PaymentProvider:   getEnv("PAYMENT_PROVIDER", "fake"),
+		PaystackSecretKey: getEnv("PAYSTACK_SECRET_KEY", ""),
+		PaystackBaseURL:   getEnv("PAYSTACK_BASE_URL", ""),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -42,6 +48,10 @@ func (c *Config) Validate() error {
 	}
 	if !validLevels[c.LogLevel] {
 		return errors.New("invalid log level")
+	}
+
+	if c.PaymentProvider != "fake" && c.PaymentProvider != "paystack" {
+		return errors.New("payment provider must be 'fake' or 'paystack'")
 	}
 
 	return nil
