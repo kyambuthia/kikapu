@@ -49,6 +49,28 @@ func TestLoad(t *testing.T) {
 			},
 			wantErr: errors.New("invalid log level"),
 		},
+		{
+			name: "paystack provider",
+			setup: func() {
+				os.Setenv("PAYMENT_PROVIDER", "paystack")
+				os.Setenv("PAYSTACK_SECRET_KEY", "sk_test_123")
+			},
+			cleanup: func() {
+				os.Unsetenv("PAYMENT_PROVIDER")
+				os.Unsetenv("PAYSTACK_SECRET_KEY")
+			},
+			wantErr: nil,
+		},
+		{
+			name: "invalid payment provider",
+			setup: func() {
+				os.Setenv("PAYMENT_PROVIDER", "invalid")
+			},
+			cleanup: func() {
+				os.Unsetenv("PAYMENT_PROVIDER")
+			},
+			wantErr: errors.New("payment provider must be 'fake' or 'paystack'"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -84,47 +106,72 @@ func TestConfigValidate(t *testing.T) {
 		{
 			name: "valid config",
 			config: &Config{
-				Addr:     ":8080",
-				Mode:     "api",
-				LogLevel: "info",
+				Addr:            ":8080",
+				Mode:            "api",
+				LogLevel:        "info",
+				PaymentProvider: "fake",
 			},
 			wantErr: nil,
 		},
 		{
 			name: "empty address",
 			config: &Config{
-				Addr:     "",
-				Mode:     "api",
-				LogLevel: "info",
+				Addr:            "",
+				Mode:            "api",
+				LogLevel:        "info",
+				PaymentProvider: "fake",
 			},
 			wantErr: errors.New("address is required"),
 		},
 		{
 			name: "invalid mode",
 			config: &Config{
-				Addr:     ":8080",
-				Mode:     "invalid",
-				LogLevel: "info",
+				Addr:            ":8080",
+				Mode:            "invalid",
+				LogLevel:        "info",
+				PaymentProvider: "fake",
 			},
 			wantErr: errors.New("mode must be 'api' or 'worker'"),
 		},
 		{
 			name: "invalid log level",
 			config: &Config{
-				Addr:     ":8080",
-				Mode:     "api",
-				LogLevel: "invalid",
+				Addr:            ":8080",
+				Mode:            "api",
+				LogLevel:        "invalid",
+				PaymentProvider: "fake",
 			},
 			wantErr: errors.New("invalid log level"),
 		},
 		{
 			name: "worker mode valid",
 			config: &Config{
-				Addr:     ":8080",
-				Mode:     "worker",
-				LogLevel: "debug",
+				Addr:            ":8080",
+				Mode:            "worker",
+				LogLevel:        "debug",
+				PaymentProvider: "fake",
 			},
 			wantErr: nil,
+		},
+		{
+			name: "paystack provider valid",
+			config: &Config{
+				Addr:            ":8080",
+				Mode:            "api",
+				LogLevel:        "info",
+				PaymentProvider: "paystack",
+			},
+			wantErr: nil,
+		},
+		{
+			name: "invalid payment provider",
+			config: &Config{
+				Addr:            ":8080",
+				Mode:            "api",
+				LogLevel:        "info",
+				PaymentProvider: "stripe",
+			},
+			wantErr: errors.New("payment provider must be 'fake' or 'paystack'"),
 		},
 	}
 
