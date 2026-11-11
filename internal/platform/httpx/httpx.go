@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
 	"time"
 )
@@ -106,12 +105,17 @@ func LoggingMiddleware(logger interface{ Info(string, ...any) }) func(http.Handl
 	}
 }
 
+// ReadJSON reads and decodes JSON from the request body.
 func ReadJSON(r *http.Request, dst interface{}) error {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
 		return err
 	}
-	defer r.Body.Close()
+	return nil
+}
 
-	return json.Unmarshal(body, dst)
+// RequestIDFromRequest extracts the request ID from the request context.
+func RequestIDFromRequest(r *http.Request) string {
+	return RequestID(r)
 }
