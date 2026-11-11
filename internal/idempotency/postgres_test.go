@@ -1,11 +1,13 @@
 package idempotency
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,7 +21,12 @@ func TestPostgresStore_ReplayReturnsSameResponse(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := sql.Open("postgres", testDBURL())
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	db, err := sql.Open("pgx", dbURL)
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -62,7 +69,12 @@ func TestPostgresStore_SameKeyDifferentHashReturnsConflict(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := sql.Open("postgres", testDBURL())
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	db, err := sql.Open("pgx", dbURL)
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -96,7 +108,12 @@ func TestPostgresStore_InFlightKeyReturnsError(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := sql.Open("postgres", testDBURL())
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	db, err := sql.Open("pgx", dbURL)
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -124,7 +141,12 @@ func TestPostgresStore_ExpiredRecordNotReplayed(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := sql.Open("postgres", testDBURL())
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	db, err := sql.Open("pgx", dbURL)
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -163,7 +185,12 @@ func TestPostgresStore_ConcurrentSameKeyExactlyOneExecutes(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := sql.Open("postgres", testDBURL())
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	db, err := sql.Open("pgx", dbURL)
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -232,9 +259,9 @@ func TestMiddleware_MissingHeaderReturns400(t *testing.T) {
 
 func TestMiddleware_ReplayReturnsStoredResponse(t *testing.T) {
 	key := "test-key"
-	_ = computeRequestHash("POST", "/v1/checkout", nil)
 	body := json.RawMessage(`{"order_id":"ord_123"}`)
 
+	handlerCalled := 0
 	store := &mockStore{
 		beginFunc: func(ctx context.Context, k, h string) (Record, bool, error) {
 			return Record{
@@ -248,10 +275,11 @@ func TestMiddleware_ReplayReturnsStoredResponse(t *testing.T) {
 
 	middleware := Middleware(store)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("Handler should not be called on replay")
+		handlerCalled++
+		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest("POST", "/v1/checkout", nil)
+	req := httptest.NewRequest("POST", "/v1/checkout", bytes.NewReader([]byte(`{"cart_id":"123"}`)))
 	req.Header.Set("Idempotency-Key", key)
 	rw := httptest.NewRecorder()
 
@@ -259,6 +287,9 @@ func TestMiddleware_ReplayReturnsStoredResponse(t *testing.T) {
 
 	if rw.Code != http.StatusOK {
 		t.Errorf("Status = %d, want %d", rw.Code, http.StatusOK)
+	}
+	if handlerCalled != 0 {
+		t.Errorf("Handler called %d times, want 0 (replay should not call handler)", handlerCalled)
 	}
 }
 
@@ -331,5 +362,9 @@ func (m *mockStore) Cleanup(ctx context.Context) error {
 }
 
 func testDBURL() string {
-	return "postgres://postgres:postgres@localhost:5432/kikapu_test?sslmode=disable"
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		return "postgres://postgres:postgres@localhost:5432/kikapu_test?sslmode=disable"
+	}
+	return url
 }

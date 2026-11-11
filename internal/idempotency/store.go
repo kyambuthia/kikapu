@@ -1,9 +1,12 @@
 package idempotency
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -78,7 +81,18 @@ func Middleware(store Store) func(http.Handler) http.Handler {
 				return
 			}
 
-			requestHash := computeRequestHash(r.Method, r.URL.Path, nil)
+			var body []byte
+			if r.Body != nil {
+				var err error
+				body, err = io.ReadAll(r.Body)
+				if err != nil {
+					httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "Failed to read request body", httpx.RequestID(r))
+					return
+				}
+				r.Body = io.NopCloser(bytes.NewReader(body))
+			}
+
+			requestHash := computeRequestHash(r.Method, r.URL.Path, body)
 
 			rec, replay, err := store.Begin(r.Context(), key, requestHash)
 			if err != nil {
@@ -116,6 +130,11 @@ func Middleware(store Store) func(http.Handler) http.Handler {
 	}
 }
 
+func ComputeRequestHash(method, path string, body []byte) string {
+	h := sha256.Sum256([]byte(method + ":" + path + ":" + string(body)))
+	return string(h[:])
+}
+
 func computeRequestHash(method, path string, body []byte) string {
-	return method + ":" + path + ":" + string(body)
+	return ComputeRequestHash(method, path, body)
 }
