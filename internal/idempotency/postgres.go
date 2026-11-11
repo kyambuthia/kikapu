@@ -59,7 +59,15 @@ func (s *PostgresStore) Begin(ctx context.Context, key, requestHash string) (Rec
 
 		if status == string(StatusPending) {
 			if time.Since(createdAt) > s.requestTimeout {
-				return Record{}, false, ErrInFlight
+				deleteQuery := `DELETE FROM idempotency_records WHERE key_hash = $1`
+				_, err := tx.ExecContext(ctx, deleteQuery, keyHash[:])
+				if err != nil {
+					return Record{}, false, fmt.Errorf("idempotency: delete timed out record: %w", err)
+				}
+				if err := tx.Commit(); err != nil {
+					return Record{}, false, fmt.Errorf("idempotency: commit delete: %w", err)
+				}
+				return s.Begin(ctx, key, requestHash)
 			}
 			return Record{}, false, ErrInFlight
 		}
@@ -111,6 +119,17 @@ func (s *PostgresStore) Begin(ctx context.Context, key, requestHash string) (Rec
 			}
 
 			if retryStatus == string(StatusPending) {
+				if time.Since(retryCreated) > s.requestTimeout {
+					deleteQuery := `DELETE FROM idempotency_records WHERE key_hash = $1`
+					_, err := tx.ExecContext(ctx, deleteQuery, keyHash[:])
+					if err != nil {
+						return Record{}, false, fmt.Errorf("idempotency: delete timed out record (retry): %w", err)
+					}
+					if err := tx.Commit(); err != nil {
+						return Record{}, false, fmt.Errorf("idempotency: commit delete (retry): %w", err)
+					}
+					return s.Begin(ctx, key, requestHash)
+				}
 				return Record{}, false, ErrInFlight
 			}
 
