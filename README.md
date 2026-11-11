@@ -6,7 +6,7 @@ A headless commerce engine in Go - single binary, Postgres backend, REST API wit
 
 Kikapu is designed as a lightweight, single-binary commerce engine that can run in API or worker mode. It uses PostgreSQL for persistence and exposes a RESTful API.
 
-**Documentation**: [Architecture](docs/ARCHITECTURE.md) | [Invariants](docs/INVARIANTS.md) | [Roadmap](docs/ROADMAP.md) | [Standards](docs/STANDARDS.md) | [ADRs](docs/adr/)
+**Documentation**: [Architecture](docs/ARCHITECTURE.md) | [Invariants](docs/INVARIANTS.md) | [Migrations](docs/MIGRATIONS.md) | [Roadmap](docs/ROADMAP.md) | [Standards](docs/STANDARDS.md) | [ADRs](docs/adr/)
 
 ## Features
 
@@ -808,6 +808,85 @@ Response:
   "created_at": "2024-01-15T10:30:00Z"
 }
 ```
+
+## Shipping Zones & Rates
+
+Kikapu supports shipping zones with multiple rate types and deterministic rate selection at checkout.
+
+### Zones
+
+Shipping zones are defined per region and country:
+
+```go
+type Zone struct {
+    ID        string
+    Name      string
+    Countries []string
+}
+```
+
+Example:
+```go
+zone := Zone{
+    ID:        "east-africa",
+    Name:      "East Africa",
+    Countries: []string{"KE", "UG", "TZ"},
+}
+```
+
+### Rate Types
+
+Three rate types are supported:
+
+1. **Flat Rate**: Fixed shipping cost regardless of weight
+   ```go
+   Rate{Kind: KindFlat, Amount: money.NewAmount(500, "USD")}
+   ```
+
+2. **Weight-Based**: Based on total cart weight (grams)
+   ```go
+   Rate{Kind: KindWeight, Amount: money.NewAmount(1000, "USD"), MinWeightG: 2000}
+   ```
+
+3. **Free Over Threshold**: Free shipping when subtotal meets threshold
+   ```go
+   Rate{Kind: KindFreeOver, FreeOver: money.NewAmount(10000, "USD")}
+   ```
+
+### Rate Selection Rules
+
+Rates are selected with deterministic ordering:
+
+1. **Free-over rates win** when subtotal ≥ threshold (equal threshold qualifies)
+2. **Ties broken by cheapest**, then by RateID (lexicographic)
+3. **Unknown destination** returns `ErrNoShippingZone`
+
+Example for KE/UG/TZ:
+```go
+zones := []Zone{
+    {ID: "east-africa", Countries: []string{"KE", "UG", "TZ"}},
+    {ID: "west-africa", Countries: []string{"NG", "GH"}},
+}
+rates := []Rate{
+    {ID: "free", ZoneID: "east-africa", Kind: KindFreeOver, FreeOver: money.NewAmount(10000, "USD")},
+    {ID: "flat", ZoneID: "east-africa", Kind: KindFlat, Amount: money.NewAmount(500, "USD")},
+    {ID: "heavy", ZoneID: "east-africa", Kind: KindWeight, Amount: money.NewAmount(800, "USD"), MinWeightG: 5000},
+}
+
+matcher := shipping.NewZoneMatcher(zones)
+zone, err := matcher.FindZone("KE") // Returns east-africa
+
+// For cart with subtotal 10000 USD
+applicable, _ := shipping.RatesFor(zone, rates, cart, subtotal, "USD")
+// Returns: [free(0 USD), flat(500 USD), heavy(800 USD)]
+```
+
+### Deterministic Ordering
+
+When multiple rates apply:
+- Free-over rates always appear first (when threshold met)
+- Remaining rates sorted by amount (ascending)
+- Equal amounts sorted by ID (lexicographic)
 
 ## Architecture Invariants
 
