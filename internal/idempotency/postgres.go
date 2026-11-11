@@ -59,20 +59,25 @@ func (s *PostgresStore) Begin(ctx context.Context, key, requestHash string) (Rec
 
 		if status == string(StatusPending) {
 			if time.Since(createdAt) > s.requestTimeout {
+				deleteQuery := `DELETE FROM idempotency_records WHERE key_hash = $1`
+				_, err := tx.ExecContext(ctx, deleteQuery, keyHash[:])
+				if err != nil {
+					return Record{}, false, fmt.Errorf("idempotency: delete expired: %w", err)
+				}
+			} else {
 				return Record{}, false, ErrInFlight
 			}
-			return Record{}, false, ErrInFlight
+		} else {
+			rec := Record{
+				Key:         key,
+				RequestHash: requestHash,
+				Status:      int(responseStatus.Int32),
+				Response:    json.RawMessage(responseBody),
+				CreatedAt:   createdAt,
+				ExpiresAt:   expiresAt,
+			}
+			return rec, true, nil
 		}
-
-		rec := Record{
-			Key:         key,
-			RequestHash: requestHash,
-			Status:      int(responseStatus.Int32),
-			Response:    json.RawMessage(responseBody),
-			CreatedAt:   createdAt,
-			ExpiresAt:   expiresAt,
-		}
-		return rec, true, nil
 	}
 
 	if err != sql.ErrNoRows {

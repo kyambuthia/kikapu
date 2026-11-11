@@ -473,7 +473,7 @@ func (r *PostgresProductRepository) getVariants(ctx context.Context, productID s
 		var v Variant
 		var currency string
 		if err := rows.Scan(
-			&v.ID, &v.ProductID, &v.SKU, &v.Price.Value, currency,
+			&v.ID, &v.ProductID, &v.SKU, &v.Price.Value, &currency,
 			&v.CreatedAt, &v.UpdatedAt,
 		); err != nil {
 			rows.Close()

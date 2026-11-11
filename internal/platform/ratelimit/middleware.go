@@ -41,7 +41,7 @@ func MiddlewareWithRate(limiter *Limiter, keyFunc func(r *http.Request) string, 
 func MiddlewareWithSizeLimit(limiter *Limiter, maxSize int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("Content-Type") == "application/json" || r.Method == "POST" || reqSizeExceeds(r, maxSize) {
+			if reqSizeExceeds(r, maxSize) {
 				http.Error(w, "Request entity too large", http.StatusRequestEntityTooLarge)
 				return
 			}

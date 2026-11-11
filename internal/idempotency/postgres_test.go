@@ -330,6 +330,40 @@ func (m *mockStore) Cleanup(ctx context.Context) error {
 	return nil
 }
 
+func TestPostgresStore_ExpiredPendingRecordAllowsNewRequest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	db, err := sql.Open("postgres", testDBURL())
+	if err != nil {
+		t.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	store := NewPostgresStore(db)
+	store.requestTimeout = 100 * time.Millisecond
+	ctx := context.Background()
+
+	key := "test-expired-pending-key"
+	requestHash := "POST:/v1/checkout:{\"cart_id\":\"123\"}"
+
+	_, _, err = store.Begin(ctx, key, requestHash)
+	if err != nil {
+		t.Fatalf("First Begin() error: %v", err)
+	}
+
+	time.Sleep(150 * time.Millisecond)
+
+	_, replay, err := store.Begin(ctx, key, requestHash)
+	if err != nil {
+		t.Fatalf("Begin() after timeout error: %v", err)
+	}
+	if replay {
+		t.Error("Expired pending record should not be replayed")
+	}
+}
+
 func testDBURL() string {
 	return "postgres://postgres:postgres@localhost:5432/kikapu_test?sslmode=disable"
 }

@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"sync"
 	"time"
 
@@ -146,6 +147,10 @@ func (r *MemoryProductRepository) List(ctx context.Context, opts ProductListOpti
 		}
 		products = append(products, *p)
 	}
+
+	sort.Slice(products, func(i, j int) bool {
+		return products[i].ID < products[j].ID
+	})
 
 	if len(products) == 0 {
 		return []Product{}, "", nil

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -861,5 +862,47 @@ func TestHandler_ProductNotFound(t *testing.T) {
 	errorObj := response["error"].(map[string]interface{})
 	if errorObj["code"] != "product_not_found" {
 		t.Errorf("error code = %v, want product_not_found", errorObj["code"])
+	}
+}
+
+func TestMemoryRepository_ListDeterministicOrder(t *testing.T) {
+	repo := NewMemoryProductRepository()
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		_, err := repo.Create(ctx, ProductInput{
+			Slug:   fmt.Sprintf("product-%d", i),
+			Name:   fmt.Sprintf("Product %d", i),
+			Status: StatusPublished,
+			Variants: []VariantInput{
+				{SKU: fmt.Sprintf("SKU-%03d", i), Price: 1000, Currency: "USD"},
+			},
+		}, fmt.Sprintf("key-%d", i))
+		if err != nil {
+			t.Fatalf("Create() error: %v", err)
+		}
+	}
+
+	var firstIDs []string
+	for i := 0; i < 10; i++ {
+		products, _, err := repo.List(ctx, ProductListOptions{})
+		if err != nil {
+			t.Fatalf("List() error: %v", err)
+		}
+		if len(products) != 5 {
+			t.Fatalf("expected 5 products, got %d", len(products))
+		}
+
+		if i == 0 {
+			for _, p := range products {
+				firstIDs = append(firstIDs, p.ID)
+			}
+		} else {
+			for j, p := range products {
+				if p.ID != firstIDs[j] {
+					t.Errorf("iteration %d: product order not deterministic, position %d got %s want %s", i, j, p.ID, firstIDs[j])
+				}
+			}
+		}
 	}
 }

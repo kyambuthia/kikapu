@@ -581,3 +581,68 @@ func TestMiddlewareWithTrustedProxyFalse(t *testing.T) {
 		t.Logf("Expected 200 OK without trusted proxy, got %d", w.Code)
 	}
 }
+
+func TestMiddlewareWithSizeLimit(t *testing.T) {
+	tests := []struct {
+		name         string
+		contentLength string
+		contentType   string
+		method       string
+		expect413    bool
+	}{
+		{
+			name:         "small JSON POST allowed",
+			contentLength: "512",
+			contentType:  "application/json",
+			method:       "POST",
+			expect413:    false,
+		},
+		{
+			name:         "large request rejected",
+			contentLength: "2048",
+			contentType:  "application/json",
+			method:       "POST",
+			expect413:    true,
+		},
+		{
+			name:         "small GET allowed",
+			contentLength: "100",
+			contentType:  "text/plain",
+			method:       "GET",
+			expect413:    false,
+		},
+		{
+			name:         "exactly at limit allowed",
+			contentLength: "1024",
+			contentType:  "application/json",
+			method:       "POST",
+			expect413:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			limiter := NewLimiter(1000)
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "ok", http.StatusOK)
+			})
+			middleware := MiddlewareWithSizeLimit(limiter, 1024)
+
+			req := httptest.NewRequest(tt.method, "/", nil)
+			req.Header.Set("Content-Length", tt.contentLength)
+			if tt.contentType != "" {
+				req.Header.Set("Content-Type", tt.contentType)
+			}
+			w := httptest.NewRecorder()
+
+			middleware.ServeHTTP(w, req)
+
+			if tt.expect413 && w.Code != http.StatusRequestEntityTooLarge {
+				t.Errorf("expected 413, got %d", w.Code)
+			}
+			if !tt.expect413 && w.Code != http.StatusOK {
+				t.Errorf("expected 200, got %d", w.Code)
+			}
+		})
+	}
+}
