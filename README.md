@@ -101,22 +101,93 @@ Integration tests skip cleanly when `TEST_DATABASE_URL` is not set.
 
 Configuration is environment-based:
 
- | Variable | Default | Description |
+| Variable | Default | Description |
 |----------|---------|-------------|
 | `KIKAPU_ADDR` | `:8080` | Address to listen on |
 | `KIKAPU_MODE` | `api` | Operation mode (api\|worker\|migrate) |
 | `KIKAPU_LOG_LEVEL` | `info` | Log level (debug\|info\|warn\|error) |
 | `DATABASE_URL` | `` | PostgreSQL connection string (required for api/migrate modes) |
 | `PAYMENT_PROVIDER` | `fake` | Payment provider (fake\|paystack\|mpesa) |
- | `PAYSTACK_SECRET_KEY` | `` | Paystack secret key (required if PAYMENT_PROVIDER=paystack) |
- | `PAYSTACK_BASE_URL` | `` | Paystack API base URL (optional, defaults to https://api.paystack.co) |
- | `MPESA_CONSUMER_KEY` | `` | M-Pesa Daraja consumer key (required if PAYMENT_PROVIDER=mpesa) |
- | `MPESA_CONSUMER_SECRET` | `` | M-Pesa Daraja consumer secret (required if PAYMENT_PROVIDER=mpesa) |
- | `MPESA_SHORT_CODE` | `` | M-Pesa business short code (required if PAYMENT_PROVIDER=mpesa) |
- | `MPESA_PASSKEY` | `` | M-Pesa passkey (required if PAYMENT_PROVIDER=mpesa) |
- | `MPESA_CALLBACK_URL` | `` | M-Pesa callback URL (required if PAYMENT_PROVIDER=mpesa) |
- | `MPESA_BASE_URL` | `` | M-Pesa API base URL (optional, defaults to https://sandbox.safaricom.co.ke) |
- | `MPESA_ALLOWED_CIDRS` | `` | Comma-separated list of allowed CIDRs for M-Pesa callbacks (required for production) |
+| `PAYSTACK_SECRET_KEY` | `` | Paystack secret key (required if PAYMENT_PROVIDER=paystack) |
+| `PAYSTACK_BASE_URL` | `` | Paystack API base URL (optional, defaults to https://api.paystack.co) |
+| `MPESA_CONSUMER_KEY` | `` | M-Pesa Daraja consumer key (required if PAYMENT_PROVIDER=mpesa) |
+| `MPESA_CONSUMER_SECRET` | `` | M-Pesa Daraja consumer secret (required if PAYMENT_PROVIDER=mpesa) |
+| `MPESA_SHORT_CODE` | `` | M-Pesa business short code (required if PAYMENT_PROVIDER=mpesa) |
+| `MPESA_PASSKEY` | `` | M-Pesa passkey (required if PAYMENT_PROVIDER=mpesa) |
+| `MPESA_CALLBACK_URL` | `` | M-Pesa callback URL (required if PAYMENT_PROVIDER=mpesa) |
+| `MPESA_BASE_URL` | `` | M-Pesa API base URL (optional, defaults to https://sandbox.safaricom.co.ke) |
+| `MPESA_ALLOWED_CIDRS` | `` | Comma-separated list of allowed CIDRs for M-Pesa callbacks (required for production) |
+
+## Idempotency
+
+All mutating endpoints support idempotency via the `Idempotency-Key` header. This ensures safe retries and prevents duplicate operations.
+
+### Header
+
+- **Name**: `Idempotency-Key`
+- **Required**: Yes, for all POST, PATCH, PUT, DELETE endpoints
+- **Format**: Any unique string (recommend UUID v4)
+- **Example**: `Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000`
+
+### Semantics
+
+| Scenario | Behavior |
+|----------|----------|
+| First request with key | Executes normally, stores response |
+| Same key + same request | Returns stored response (replay) |
+| Same key + different request | 409 Conflict |
+| Concurrent same-key requests | 409 Conflict with `Retry-After` |
+| Key older than 24h | Treated as new request |
+
+### Conflict Detection
+
+The idempotency system uses a SHA-256 hash of the request (method + path + body) to detect conflicts:
+
+- If the same key is reused with a **different** request, the system rejects it with `idempotency_conflict`
+- This prevents accidental key reuse across different operations
+
+### Expiration
+
+- Idempotency keys expire after **24 hours**
+- After expiration, the key can be reused for new operations
+- A background cleanup worker removes expired records hourly
+
+### Endpoints Requiring Idempotency
+
+- `POST /v1/checkout` - Place order
+- `POST /v1/orders/{id}/refund` - Refund order
+- `POST /v1/admin/products` - Create product
+- `PATCH /v1/admin/products/{id}` - Update product
+- `DELETE /v1/admin/products/{id}` - Delete product
+- `PUT /v1/admin/products/{id}/stock` - Update stock level
+
+### Example: Retry Behavior
+
+```bash
+# First request - succeeds
+curl -X POST http://localhost:8080/v1/checkout \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: my-unique-key-123" \
+  -d '{"cart_id": "cart_001"}'
+
+# Response: {"order_id": "ord_123", "status": "paid"}
+
+# Retry with same key + same body - returns cached response
+curl -X POST http://localhost:8080/v1/checkout \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: my-unique-key-123" \
+  -d '{"cart_id": "cart_001"}'
+
+# Response: {"order_id": "ord_123", "status": "paid"} (same order)
+
+# Different cart with same key - conflict
+curl -X POST http://localhost:8080/v1/checkout \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: my-unique-key-123" \
+  -d '{"cart_id": "cart_002"}'
+
+# Response: 409 Conflict
+```
 
 ## Database Schema
 
@@ -805,10 +876,35 @@ Response:
 
 #### Idempotency Behavior
 
-- Same `Idempotency-Key` + same cart → same order returned
-- Concurrent requests with same key → guaranteed single order creation
-- Idempotency prevents duplicate charges even under concurrent access
-- Cart is cleared after successful order
+- Same `Idempotency-Key` + same request → same response (replay returns the original response)
+- Same `Idempotency-Key` + different request → 409 Conflict (key reused with different payload)
+- Concurrent requests with same key → 409 Conflict with `Retry-After` header (request in flight)
+- Idempotency records expire after 24 hours
+- Expired records are cleaned up by a background worker
+
+#### Idempotency Error Responses
+
+**Key reused with different request (409 Conflict):**
+```json
+{
+  "error": {
+    "code": "idempotency_conflict",
+    "message": "This idempotency key was already used with a different request"
+  }
+}
+```
+
+**Request in flight (409 Conflict):**
+```json
+{
+  "error": {
+    "code": "request_in_flight",
+    "message": "A request with this idempotency key is already being processed. Retry after the indicated time."
+  }
+}
+```
+
+The response includes a `Retry-After: 30` header indicating when to retry.
 
 #### Error Cases
 
