@@ -96,6 +96,8 @@ Configuration is environment-based:
 | GET | `/v1/version` | Version info - returns version and commit |
 | GET | `/v1/products` | List products with pagination |
 | GET | `/v1/products/{slug}` | Get a single product by slug |
+| GET | `/v1/regions` | List all regions |
+| GET | `/v1/channels` | List all sales channels |
 | POST | `/v1/carts` | Create a new cart |
 | GET | `/v1/carts/{id}` | Get a cart by ID |
 | DELETE | `/v1/carts/{id}` | Delete (clear) a cart |
@@ -103,7 +105,7 @@ Configuration is environment-based:
 | PATCH | `/v1/carts/{id}/items/{variantID}` | Update item quantity |
 | DELETE | `/v1/carts/{id}/items/{variantID}` | Remove item from cart |
  | POST | `/v1/checkout` | Place an order (requires Idempotency-Key header) |
-| POST | `/v1/webhooks/paystack` | Paystack webhook endpoint |
+ | POST | `/v1/webhooks/paystack` | Paystack webhook endpoint |
 
 ## Products API Examples
 
@@ -177,6 +179,64 @@ Response:
   "status": "published",
   "variants": [
     {"id": "var001", "sku": "WM-BLK-001", "price": {"value": 2999, "currency": "USD"}, "currency": "USD"}
+  ]
+}
+```
+
+### Filter Products by Region and Channel
+
+Products can be filtered by region and channel using query parameters:
+
+```bash
+curl "http://localhost:8080/v1/products?region=reg-001&channel=default"
+```
+
+This filters products based on:
+- Region: Returns products available in the specified region's currency
+- Channel: Returns products published in the specified sales channel
+
+### Regions
+
+List all available regions:
+
+```bash
+curl http://localhost:8080/v1/regions
+```
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "reg-001",
+      "name": "Kenya",
+      "currency": "KES",
+      "countries": ["KE"],
+      "tax_rate_bps": 1600,
+      "tax_inclusive": true
+    }
+  ]
+}
+```
+
+### Sales Channels
+
+List all sales channels:
+
+```bash
+curl http://localhost:8080/v1/channels
+```
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "ch-001",
+      "name": "Default",
+      "slug": "default",
+      "regions": ["reg-001", "reg-002"]
+    }
   ]
 }
 ```

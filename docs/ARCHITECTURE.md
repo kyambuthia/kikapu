@@ -96,17 +96,57 @@ No message broker. No cache layer. No microservices.
 | `internal/platform/httpx` | ErrorEnvelope, RequestID middleware | stdlib | Domain types |
 | `internal/platform/money` | Amount{Value,Currency}, arithmetic errors | stdlib | Business logic |
 | `internal/platform/obs` | Logger interface, JSON handler | stdlib, log/slog | Request processing |
+| `internal/region` | Region, Repository interface | stdlib | channel, pricing, catalog |
+| `internal/channel` | SalesChannel, Repository interface | stdlib | region, pricing, catalog |
 | `internal/catalog` | Product, Variant, Repository interface | money, httpx (error codes) | cart, checkout, order, payment |
 | `internal/cart` | Cart, Line, Store interface | money, httpx | checkout, payment, inventory |
 | `internal/inventory` | Reservation, Service, Clock abstraction | stdlib | cart, checkout, order, payment |
-| `internal/pricing` | PriceResolver, Channel pricing | money | cart mutation, payment |
+| `internal/pricing` | PriceResolver, Channel pricing, ResolveForRegion | money, catalog, region, channel | cart mutation, payment |
 | `internal/payment` | Provider interface, Payment state machine, ChargeRequest/Result | money | HTTP, routes |
 | `internal/payment/paystack` | Paystack API client, webhook signature verification | payment | M-Pesa, cart, checkout |
 | `internal/payment/mpesa` | M-Pesa STK Push, callback handler, IP allowlist | payment | Paystack, cart, checkout |
 | `internal/checkout` | Order, Service, IdempotencyStore | cart, inventory, payment | HTTP, routes |
-| `internal/routes` | HTTP handlers, request/response DTOs | catalog, cart, checkout, httpx | Database SQL, payment implementation details |
+| `internal/routes` | HTTP handlers, request/response DTOs | catalog, region, channel, cart, checkout, httpx | Database SQL, payment implementation details |
 
 **Import graph**: `routes → domain services → platform utilities`
+
+## 4.1. Regions and Sales Channels
+
+Kikapu supports Medusa-style regions and sales channels for multi-currency, multi-region pricing.
+
+### Region
+
+A region defines:
+- Currency (ISO-4217, e.g., "KES", "USD")
+- Countries (ISO-3166 alpha-2, e.g., "KE", "UG")
+- Tax rate in basis points (0-10000, where 1600 = 16%)
+- Tax inclusive/exclusive flag
+
+### Sales Channel
+
+A sales channel defines:
+- ID, Name, and Slug
+- List of region IDs where products are available
+
+### Product Visibility
+
+Products are visible per channel and priced per region:
+- A product must be published in a channel (region association)
+- Pricing is resolved based on the region's currency
+
+### Pricing Resolution Flow
+
+```
+1. Base price (from product variant)
+   ↓
+2. Price list for the region (planned)
+   ↓
+3. Promotion (planned)
+   ↓
+4. Tax calculation (inclusive/exclusive based on region)
+```
+
+The resolution order ensures predictable pricing across regions.
 
 ## 4. Request Path: POST /v1/checkout
 
