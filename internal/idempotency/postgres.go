@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type PostgresStore struct {
@@ -179,6 +182,9 @@ func isUniqueViolation(err error) bool {
 	if err == nil {
 		return false
 	}
-	return err.Error() == "pq: duplicate key value violates unique constraint \"idempotency_records_pkey\"" ||
-		err.Error() == "ERROR: duplicate key value violates unique constraint \"idempotency_records_pkey\" (SQLSTATE 23505)"
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
 }

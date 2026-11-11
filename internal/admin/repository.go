@@ -8,10 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/kyambuthia/kikapu/internal/platform/money"
 )
 
@@ -628,7 +628,12 @@ func (r *PostgresStockRepository) UpdateLevel(ctx context.Context, variantID, lo
 }
 
 func isUniqueViolation(err error) bool {
-	return err != nil && (errors.Is(err, sql.ErrNoRows) ||
-		strings.Contains(err.Error(), "duplicate key") ||
-		strings.Contains(err.Error(), "UNIQUE constraint"))
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
 }
