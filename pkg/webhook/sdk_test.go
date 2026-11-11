@@ -22,76 +22,76 @@ func TestVerify(t *testing.T) {
 	fiveMinutes := 5 * time.Minute
 
 	tests := []struct {
-		name     string
-		secret   string
-		header   string
-		body     []byte
-		maxAge   time.Duration
-		wantErr  error
+		name    string
+		secret  string
+		header  string
+		body    []byte
+		maxAge  time.Duration
+		wantErr error
 	}{
 		{
-			name:     "valid signature",
-			secret:   secret,
-			header:   BuildSignatureHeader(now, Sign(secret, now, body)),
-			body:     body,
-			maxAge:   5 * time.Minute,
-			wantErr:  nil,
+			name:    "valid signature",
+			secret:  secret,
+			header:  BuildSignatureHeader(now, Sign(secret, now, body)),
+			body:    body,
+			maxAge:  5 * time.Minute,
+			wantErr: nil,
 		},
 		{
-			name:     "invalid secret",
-			secret:   "wrong-secret",
-			header:   BuildSignatureHeader(now, Sign(secret, now, body)),
-			body:     body,
-			maxAge:   5 * time.Minute,
-			wantErr:  ErrInvalidSignature,
+			name:    "invalid secret",
+			secret:  "wrong-secret",
+			header:  BuildSignatureHeader(now, Sign(secret, now, body)),
+			body:    body,
+			maxAge:  5 * time.Minute,
+			wantErr: ErrInvalidSignature,
 		},
 		{
-			name:     "tampered body",
-			secret:   secret,
-			header:   BuildSignatureHeader(now, Sign(secret, now, body)),
-			body:     []byte(`{"test":"tampered"}`),
-			maxAge:   5 * time.Minute,
-			wantErr:  ErrInvalidSignature,
+			name:    "tampered body",
+			secret:  secret,
+			header:  BuildSignatureHeader(now, Sign(secret, now, body)),
+			body:    []byte(`{"test":"tampered"}`),
+			maxAge:  5 * time.Minute,
+			wantErr: ErrInvalidSignature,
 		},
 		{
-			name:     "stale timestamp",
-			secret:   secret,
-			header:   BuildSignatureHeader(now.Add(-6*time.Minute), Sign(secret, now.Add(-6*time.Minute), body)),
-			body:     body,
-			maxAge:   fiveMinutes,
-			wantErr:  ErrStaleTimestamp,
+			name:    "stale timestamp",
+			secret:  secret,
+			header:  BuildSignatureHeader(now.Add(-6*time.Minute), Sign(secret, now.Add(-6*time.Minute), body)),
+			body:    body,
+			maxAge:  fiveMinutes,
+			wantErr: ErrStaleTimestamp,
 		},
 		{
-			name:     "fresh timestamp slightly old",
-			secret:   secret,
-			header:   BuildSignatureHeader(now.Add(-1*time.Minute), Sign(secret, now.Add(-1*time.Minute), body)),
-			body:     body,
-			maxAge:   fiveMinutes,
-			wantErr:  nil,
+			name:    "fresh timestamp slightly old",
+			secret:  secret,
+			header:  BuildSignatureHeader(now.Add(-1*time.Minute), Sign(secret, now.Add(-1*time.Minute), body)),
+			body:    body,
+			maxAge:  fiveMinutes,
+			wantErr: nil,
 		},
 		{
-			name:     "empty header",
-			secret:   secret,
-			header:   "",
-			body:     body,
-			maxAge:   fiveMinutes,
-			wantErr:  webhook.ErrMissingSignature,
+			name:    "empty header",
+			secret:  secret,
+			header:  "",
+			body:    body,
+			maxAge:  fiveMinutes,
+			wantErr: webhook.ErrMissingSignature,
 		},
 		{
-			name:     "header with no parts",
-			secret:   secret,
-			header:   " ",
-			body:     body,
-			maxAge:   fiveMinutes,
-			wantErr:  webhook.ErrMalformedSignature,
+			name:    "header with no parts",
+			secret:  secret,
+			header:  " ",
+			body:    body,
+			maxAge:  fiveMinutes,
+			wantErr: webhook.ErrMalformedSignature,
 		},
 		{
-			name:     "invalid timestamp value",
-			secret:   secret,
-			header:   "t=invalid,v1=fake",
-			body:     body,
-			maxAge:   fiveMinutes,
-			wantErr:  errors.New("invalid signature"),
+			name:    "invalid timestamp value",
+			secret:  secret,
+			header:  "t=invalid,v1=fake",
+			body:    body,
+			maxAge:  fiveMinutes,
+			wantErr: errors.New("invalid signature"),
 		},
 	}
 
@@ -365,14 +365,14 @@ func TestInMemoryIdempotentStore(t *testing.T) {
 func TestHandlerIntegration(t *testing.T) {
 	secret := "test-secret"
 	handler := Handler{
-		Secret:  secret,
+		Secret:    secret,
 		Tolerance: 5 * time.Minute,
 	}
-	
+
 	t.Run("happy path - full flow", func(t *testing.T) {
 		r := httptest.NewRequest("POST", "/webhook", nil)
 		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("X-Kikapu-Signature", "t=" + strconv.FormatInt(time.Now().Unix(), 10) + ",v1=fake_sig")
+		r.Header.Set("X-Kikapu-Signature", "t="+strconv.FormatInt(time.Now().Unix(), 10)+",v1=fake_sig")
 		r.Header.Set("X-Kikapu-Delivery", "test_delivery")
 		r.Header.Set("X-Kikapu-Event", "order.paid")
 		r.Body = io.NopCloser(strings.NewReader(`{"test":"data"}`))
@@ -390,8 +390,8 @@ func TestHandlerIntegration(t *testing.T) {
 		store := NewInMemoryIdempotentStore()
 
 		idempotentHandler := Handler{
-			Secret:       secret,
-			Tolerance:    5 * time.Minute,
+			Secret:    secret,
+			Tolerance: 5 * time.Minute,
 			Idempotent: func(ctx context.Context, id string) (bool, error) {
 				return store.Exists(ctx, id)
 			},
@@ -405,7 +405,7 @@ func TestHandlerIntegration(t *testing.T) {
 		// First request - processes and saves
 		r1 := httptest.NewRequest("POST", "/webhook", nil)
 		r1.Header.Set("Content-Type", "application/json")
-		r1.Header.Set("X-Kikapu-Signature", "t=" + strconv.FormatInt(time.Now().Unix(), 10) + ",v1=fake_sig")
+		r1.Header.Set("X-Kikapu-Signature", "t="+strconv.FormatInt(time.Now().Unix(), 10)+",v1=fake_sig")
 		r1.Header.Set("X-Kikapu-Delivery", "first_delivery")
 		r1.Header.Set("X-Kikapu-Event", "order.paid")
 		r1.Body = io.NopCloser(strings.NewReader(`{"test":1}`))
@@ -416,7 +416,7 @@ func TestHandlerIntegration(t *testing.T) {
 		// Second request with same delivery ID - should be skipped
 		r2 := httptest.NewRequest("POST", "/webhook", nil)
 		r2.Header.Set("Content-Type", "application/json")
-		r2.Header.Set("X-Kikapu-Signature", "t=" + strconv.FormatInt(time.Now().Unix(), 10) + ",v1=fake_sig")
+		r2.Header.Set("X-Kikapu-Signature", "t="+strconv.FormatInt(time.Now().Unix(), 10)+",v1=fake_sig")
 		r2.Header.Set("X-Kikapu-Delivery", "first_delivery")
 		r2.Header.Set("X-Kikapu-Event", "order.paid")
 		r2.Body = io.NopCloser(strings.NewReader(`{"test":2}`))
