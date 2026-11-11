@@ -1,0 +1,51 @@
+name: Migration Compatibility Gate
+
+on:
+  pull_request:
+    branches: [ main, master, develop ]
+    paths:
+      - 'migrations/**'
+      - 'scripts/migration-gate.sh'
+  push:
+    branches: [ main, master, develop ]
+    paths:
+      - 'migrations/**'
+
+jobs:
+  compatibility-check:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: kikapu
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Install PostgreSQL client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+    
+    - name: Run migration compatibility gate
+      env:
+        TEST_DATABASE_URL: postgres://test:test@localhost:5432/kikapu?sslmode=disable
+      run: |
+        chmod +x scripts/migration-gate.sh
+        ./scripts/migration-gate.sh
+    
+    - name: Run self-test
+      run: ./scripts/migration-gate.sh --self-test
