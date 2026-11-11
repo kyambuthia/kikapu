@@ -208,3 +208,15 @@ func roundInternal(value, step int64, bankers bool) Amount {
 	}
 	return Amount{Value: quotient * step * sign, Currency: ""}
 }
+
+func IsISO4217(currency string) bool {
+	if len(currency) != 3 {
+		return false
+	}
+	for _, c := range currency {
+		if c < 'A' || c > 'Z' {
+			return false
+		}
+	}
+	return true
+}
