@@ -8,15 +8,27 @@ import (
 	"strings"
 
 	"github.com/kyambuthia/kikapu/internal/catalog"
+	"github.com/kyambuthia/kikapu/internal/channel"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
+	"github.com/kyambuthia/kikapu/internal/region"
 )
 
 type CatalogHandler struct {
-	Repo catalog.Repository
+	Repo        catalog.Repository
+	RegionRepo  region.Repository
+	ChannelRepo channel.Repository
 }
 
 func NewCatalogHandler(repo catalog.Repository) *CatalogHandler {
 	return &CatalogHandler{Repo: repo}
+}
+
+func NewCatalogHandlerWithFilters(repo catalog.Repository, regionRepo region.Repository, channelRepo channel.Repository) *CatalogHandler {
+	return &CatalogHandler{
+		Repo:        repo,
+		RegionRepo:  regionRepo,
+		ChannelRepo: channelRepo,
+	}
 }
 
 func (h *CatalogHandler) RegisterRoutes(mux *http.ServeMux) {
@@ -174,6 +186,8 @@ func (h *CatalogHandler) listProducts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cursor := r.URL.Query().Get("cursor")
+	regionParam := r.URL.Query().Get("region")
+	channelParam := r.URL.Query().Get("channel")
 	fieldsParam := r.URL.Query().Get("fields")
 	fields := parseFields(fieldsParam)
 	variantFields := parseVariantFields(fieldsParam)
@@ -212,8 +226,15 @@ func (h *CatalogHandler) listProducts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := make([]ProductResponse, 0, len(products))
-	for _, p := range products {
+	var filteredProducts []catalog.Product
+	if regionParam != "" || channelParam != "" {
+		filteredProducts = h.filterProductsByRegionChannel(ctx, products, regionParam, channelParam)
+	} else {
+		filteredProducts = products
+	}
+
+	data := make([]ProductResponse, 0, len(filteredProducts))
+	for _, p := range filteredProducts {
 		resp := applySparseFieldsetWithVariant(p, fields, variantFields)
 		if resp.ID == "" && fields != nil {
 			continue
@@ -248,6 +269,10 @@ func (h *CatalogHandler) getProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	regionParam := r.URL.Query().Get("region")
+	channelParam := r.URL.Query().Get("channel")
+	_ = regionParam
+	_ = channelParam
 	fieldsParam := r.URL.Query().Get("fields")
 	fields := parseFields(fieldsParam)
 	variantFields := parseVariantFields(fieldsParam)
@@ -289,4 +314,45 @@ func WriteJSON(w http.ResponseWriter, status int, data interface{}) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(data)
+}
+
+func (h *CatalogHandler) filterProductsByRegionChannel(ctx interface{}, products []catalog.Product, regionID, channelSlug string) []catalog.Product {
+	if h.RegionRepo == nil || h.ChannelRepo == nil {
+		return products
+	}
+
+	var ch *channel.SalesChannel
+	var err error
+	if channelSlug != "" {
+		ch, err = h.ChannelRepo.GetBySlug(ctx, channelSlug)
+		if err != nil {
+			return products
+		}
+	}
+
+	var reg *region.Region
+	if regionID != "" {
+		reg, err = h.RegionRepo.Get(ctx, regionID)
+		if err != nil {
+			return products
+		}
+	}
+
+	var allowedRegions map[string]bool
+	if ch != nil {
+		allowedRegions = make(map[string]bool)
+		for _, rID := range ch.Regions {
+			allowedRegions[rID] = true
+		}
+	}
+
+	result := make([]catalog.Product, 0, len(products))
+	for _, p := range products {
+		if ch != nil && reg != nil && allowedRegions[reg.ID] {
+			result = append(result, p)
+		} else if ch == nil && reg == nil {
+			result = append(result, p)
+		}
+	}
+	return result
 }
