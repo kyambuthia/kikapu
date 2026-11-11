@@ -279,6 +279,11 @@ EOF
  | PUT | `/v1/admin/products/{id}/stock` | Update stock level (admin only) |
  | GET | `/v1/admin/orders` | List orders (admin only) |
  | GET | `/v1/admin/orders/{id}` | Get order (admin only) |
+ | POST | `/v1/admin/orders/{id}/fulfillments` | Create fulfillment (admin only) |
+ | GET | `/v1/admin/orders/{id}/fulfillments` | List order fulfillments (admin only) |
+ | GET | `/v1/admin/fulfillments/{id}` | Get fulfillment (admin only) |
+ | PATCH | `/v1/admin/fulfillments/{id}` | Update fulfillment status (admin only) |
+ | POST | `/v1/admin/fulfillments/{id}/tracking` | Add tracking information (admin only) |
 
 ## API Key Authentication
 
@@ -1310,6 +1315,134 @@ GrandTotal = Subtotal + Tax - Discount
 ```
 
 All monetary values are stored in minor units (cents, pence, etc.) using the `money.Amount` type.
+
+## Fulfillment
+
+Kikapu supports partial fulfillment with tracking information. Multiple fulfillments can be created for a single order, with each fulfillment tracking specific items through the pick, pack, ship workflow.
+
+### Fulfillment Status Transitions
+
+| From | To | Allowed |
+|------|-----|---------|
+| pending | picked, cancelled | ✓ |
+| picked | packed, cancelled | ✓ |
+| packed | shipped, cancelled | ✓ |
+| shipped | delivered | ✓ |
+| delivered | — | terminal |
+| cancelled | — | terminal |
+
+### Partial Fulfillment
+
+An order can have multiple fulfillments:
+
+- Each fulfillment tracks a subset of ordered items
+- Total fulfilled quantity across all fulfillments cannot exceed ordered quantity
+- Order `fulfillment_status` becomes `fulfilled` when all items are shipped
+- Cancelled fulfillments don't count toward fulfilled totals
+
+### Tracking
+
+- Tracking information can be added only to `shipped` fulfillments
+- Carrier and tracking number are required
+- Tracking URL must use HTTPS (for security)
+
+### HTTP Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/v1/admin/orders/{id}/fulfillments` | Create fulfillment |
+| GET | `/v1/admin/orders/{id}/fulfillments` | List order fulfillments |
+| GET | `/v1/admin/fulfillments/{id}` | Get fulfillment |
+| PATCH | `/v1/admin/fulfillments/{id}` | Update fulfillment status |
+| POST | `/v1/admin/fulfillments/{id}/tracking` | Add tracking information |
+
+### Error Cases
+
+| Code | Description |
+|------|-------------|
+| `over_fulfillment` | Total quantity exceeds ordered amount |
+| `order_not_confirmed` | Order must be confirmed before fulfillment |
+| `invalid_transition` | Status transition not allowed |
+| `invalid_tracking_url` | Tracking URL must be HTTPS |
+| `missing_carrier` | Carrier is required for tracking |
+| `missing_tracking_number` | Tracking number is required |
+
+### Example: Create and Ship Fulfillment
+
+```bash
+# Create fulfillment for order
+curl -X POST http://localhost:8080/v1/admin/orders/ord-123/fulfillments \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{
+    "items": [
+      {"variant_id": "var-001", "quantity": 2},
+      {"variant_id": "var-002", "quantity": 1}
+    ]
+  }'
+
+# Response (201 Created):
+{
+  "id": "ful_20240115103000abc123",
+  "order_id": "ord-123",
+  "status": "pending",
+  "items": [
+    {"variant_id": "var-001", "quantity": 2},
+    {"variant_id": "var-002", "quantity": 1}
+  ],
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-15T10:30:00Z"
+}
+
+# Update status through workflow
+curl -X PATCH http://localhost:8080/v1/admin/fulfillments/ful_20240115103000abc123 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{"status": "picked"}'
+
+# ... pending → picked → packed → shipped ...
+
+# Add tracking when shipped
+curl -X POST http://localhost:8080/v1/admin/fulfillments/ful_20240115103000abc123/tracking \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{
+    "carrier": "DHL",
+    "number": "1234567890",
+    "url": "https://track.dhl.com/1234567890"
+  }'
+```
+
+### Example: Partial Fulfillment
+
+For an order with 10 items, create multiple fulfillments:
+
+```bash
+# First fulfillment: 6 items
+curl -X POST http://localhost:8080/v1/admin/orders/ord-123/fulfillments \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{"items": [{"variant_id": "var-001", "quantity": 6}]}'
+
+# Second fulfillment: 4 items (remaining)
+curl -X POST http://localhost:8080/v1/admin/orders/ord-123/fulfillments \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{"items": [{"variant_id": "var-001", "quantity": 4}]}'
+
+# Over-fulfillment is rejected
+curl -X POST http://localhost:8080/v1/admin/orders/ord-123/fulfillments \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{"items": [{"variant_id": "var-001", "quantity": 1}]}'
+# Response: 400 Bad Request - "fulfillment items exceed ordered quantity"
+```
+
+### Event Emission
+
+The `order.fulfilled` event is emitted when:
+- All ordered items have been shipped (status = `shipped`)
+- Across all non-cancelled fulfillments for the order
 
 ### HTTP Endpoints
 
