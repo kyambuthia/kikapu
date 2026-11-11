@@ -201,8 +201,10 @@ func (r *PostgresProductRepository) List(ctx context.Context, opts ProductListOp
 	}
 
 	baseQuery := `
-		SELECT id, slug, name, status, created_at, updated_at
-		FROM products
+		SELECT p.id, p.slug, p.name, p.status, p.created_at, p.updated_at,
+		       v.id, v.product_id, v.sku, v.price, v.currency, v.created_at, v.updated_at
+		FROM products p
+		LEFT JOIN variants v ON v.product_id = p.id
 		WHERE 1=1
 	`
 
@@ -210,7 +212,7 @@ func (r *PostgresProductRepository) List(ctx context.Context, opts ProductListOp
 	argNum := 1
 
 	if opts.Status != "" {
-		baseQuery += fmt.Sprintf(" AND status = $%d", argNum)
+		baseQuery += fmt.Sprintf(" AND p.status = $%d", argNum)
 		args = append(args, opts.Status)
 		argNum++
 	}
@@ -228,12 +230,12 @@ func (r *PostgresProductRepository) List(ctx context.Context, opts ProductListOp
 			return nil, "", ErrInvalidCursor
 		}
 
-		baseQuery += fmt.Sprintf(" AND id > $%d", argNum)
+		baseQuery += fmt.Sprintf(" AND p.id > $%d", argNum)
 		args = append(args, cursorData.LastID)
 		argNum++
 	}
 
-	baseQuery += fmt.Sprintf(" ORDER BY id LIMIT $%d", argNum)
+	baseQuery += fmt.Sprintf(" ORDER BY p.id, v.id LIMIT $%d", argNum)
 	args = append(args, limit+1)
 
 	rows, err := r.db.QueryContext(ctx, baseQuery, args...)
@@ -242,20 +244,60 @@ func (r *PostgresProductRepository) List(ctx context.Context, opts ProductListOp
 	}
 	defer rows.Close()
 
-	products := make([]Product, 0, limit)
+	productMap := make(map[string]*Product)
+	productOrder := make([]string, 0, limit)
+
 	for rows.Next() {
-		var p Product
+		var productID, productSlug, productName string
+		var productStatus ProductStatus
+		var productCreatedAt, productUpdatedAt time.Time
+		var variantID, variantProductID, variantSKU sql.NullString
+		var variantPrice sql.NullInt64
+		var variantCurrency sql.NullString
+		var variantCreatedAt, variantUpdatedAt sql.NullTime
+
 		if err := rows.Scan(
-			&p.ID, &p.Slug, &p.Name, &p.Status,
-			&p.CreatedAt, &p.UpdatedAt,
+			&productID, &productSlug, &productName, &productStatus,
+			&productCreatedAt, &productUpdatedAt,
+			&variantID, &variantProductID, &variantSKU, &variantPrice,
+			&variantCurrency, &variantCreatedAt, &variantUpdatedAt,
 		); err != nil {
 			return nil, "", fmt.Errorf("admin: scan product: %w", err)
 		}
-		products = append(products, p)
+
+		if _, exists := productMap[productID]; !exists {
+			productMap[productID] = &Product{
+				ID:        productID,
+				Slug:      productSlug,
+				Name:      productName,
+				Status:    productStatus,
+				Variants:  []Variant{},
+				CreatedAt: productCreatedAt,
+				UpdatedAt: productUpdatedAt,
+			}
+			productOrder = append(productOrder, productID)
+		}
+
+		if variantID.Valid {
+			variant := Variant{
+				ID:        variantID.String,
+				ProductID: variantProductID.String,
+				SKU:       variantSKU.String,
+				Price:     money.NewAmount(variantPrice.Int64, variantCurrency.String),
+				CreatedAt: variantCreatedAt.Time,
+				UpdatedAt: variantUpdatedAt.Time,
+			}
+			productMap[productID].Variants = append(productMap[productID].Variants, variant)
+		}
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, "", fmt.Errorf("admin: iterate products: %w", err)
+	}
+
+	products := make([]Product, 0, len(productOrder))
+	for _, id := range productOrder {
+		products = append(products, *productMap[id])
 	}
 
 	var nextCursor string
@@ -270,14 +312,6 @@ func (r *PostgresProductRepository) List(ctx context.Context, opts ProductListOp
 			return nil, "", fmt.Errorf("admin: marshal cursor: %w", err)
 		}
 		nextCursor = base64.StdEncoding.EncodeToString(cursorBytes)
-	}
-
-	for i := range products {
-		variants, err := r.getVariants(ctx, products[i].ID)
-		if err != nil {
-			return nil, "", fmt.Errorf("admin: get variants for product %s: %w", products[i].ID, err)
-		}
-		products[i].Variants = variants
 	}
 
 	return products, nextCursor, nil
@@ -433,7 +467,6 @@ func (r *PostgresProductRepository) getVariants(ctx context.Context, productID s
 	if err != nil {
 		return nil, fmt.Errorf("admin: query variants: %w", err)
 	}
-	defer rows.Close()
 
 	var variants []Variant
 	for rows.Next() {
@@ -443,6 +476,7 @@ func (r *PostgresProductRepository) getVariants(ctx context.Context, productID s
 			&v.ID, &v.ProductID, &v.SKU, &v.Price.Value, currency,
 			&v.CreatedAt, &v.UpdatedAt,
 		); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("admin: scan variant: %w", err)
 		}
 		v.Price.Currency = currency
@@ -450,9 +484,11 @@ func (r *PostgresProductRepository) getVariants(ctx context.Context, productID s
 	}
 
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, fmt.Errorf("admin: iterate variants: %w", err)
 	}
 
+	rows.Close()
 	return variants, nil
 }
 
