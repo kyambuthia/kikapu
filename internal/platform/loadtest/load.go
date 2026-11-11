@@ -239,7 +239,6 @@ func requestCatalogList(client *http.Client, baseURL string) time.Duration {
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		resp.Body.Close()
 		return 0
 	}
 	elapsed := time.Since(start)
@@ -262,7 +261,6 @@ func requestProductDetail(client *http.Client, baseURL string) time.Duration {
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		resp.Body.Close()
 		return 0
 	}
 	elapsed := time.Since(start)
@@ -298,7 +296,6 @@ func requestCheckout(client *http.Client, baseURL string) time.Duration {
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		resp.Body.Close()
 		return 0
 	}
 	elapsed := time.Since(start)
