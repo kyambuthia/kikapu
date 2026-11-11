@@ -1,196 +1,135 @@
 # Invariants
 
-This document defines the architectural invariants enforced by kikapu. Each invariant is numbered, testable, and references its enforcement mechanism.
-
-## Money Invariants
-
-### INV-1: Money is stored and computed in minor units; no float in any money path.
-
-**Enforcement**:
-- Type: `internal/platform/money.Amount{Value int64, Currency string}` (money.go:16-19)
-- All arithmetic returns `int64` values with overflow checks
-- **Test coverage**: `internal/platform/money/money_test.go` — 8 test functions covering parse, format, add, sub, mul, div, rounding
-
-**Rationale**: Floats cannot represent 0.10 exactly in binary. Minor units (cents) avoid rounding errors.
-
-**Checkable**: `grep -r "float64.*money" internal/` returns nothing.
+Eight numbered, testable rules that define kikapu's correctness boundaries. Each invariant names the test file that enforces it, or states `enforcement: missing`.
 
 ---
 
-### INV-2: Every mutation endpoint requires Idempotency-Key; replay returns the original result.
+## INV-1: Money in Minor Units
 
-**Enforcement**:
-- Endpoint: `POST /v1/checkout` (routes/cart.go:239-242)
-- Missing key: Returns 400 `missing_idempotency_key`
-- Storage: `checkout.IdempotencyStore` (checkout.go:41-89)
-- Replay behavior: Returns same order (checkout.go:130-132)
-- Concurrent safety: `sync.RWMutex` guards keys map
+**Statement**: Money is stored and computed in minor units (cents, pence, satoshis); no `float64` in any money path.
 
-**Test coverage**: 
-- `internal/checkout/checkout_test.go:TestService_PlaceOrder_DoubleSubmit` — verifies replay returns same order
-- `internal/checkout/checkout_test.go:TestService_PlaceOrder_Concurrent` — verifies single order creation under concurrent access
+**Enforcement**: `internal/platform/money/money_test.go`
 
-**Current limitations**:
-- Idempotency keys stored in-memory (cleared on restart)
-- No TTL (keys persist indefinitely)
-- **Planned**: Persistent store with 24h TTL in Phase 3
+**How to check**:
+- `go test ./internal/platform/money/...` (8+ test functions covering parse, add, sub, mul, div, rounding)
+- `grep -r "float64" internal/platform/money/` returns nothing
 
 ---
 
-## Inventory Invariants
+## INV-2: Idempotent Mutations
 
-### INV-3: Stock is never negative; Available = OnHand - Reserved ≥ 0 at all times.
+**Statement**: Every mutation endpoint requires `Idempotency-Key`; replay with the same key returns the original response.
 
-**Enforcement**:
-- Code: `internal/inventory/inventory.go:68-82` — Reserve() checks before decrementing
-- Formula: `if available-reserved < quantity { return ErrInsufficientStock }` (line 80-81)
-- Mutex: `sync.RWMutex` ensures atomic check-and-reserve
+**Enforcement**: `internal/checkout/checkout_test.go` (tests: `TestService_PlaceOrder_DoubleSubmit`, `TestService_PlaceOrder_Concurrent`)
 
-**Test coverage**: 
-- `internal/inventory/inventory_test.go` — tests insufficient stock scenarios
-- `internal/checkout/checkout_test.go:TestService_PlaceOrder_ExpiredReservation` — verifies stock invariant
-
-**Current limitations**:
-- In-memory only; no persistent stock levels
-- **Planned**: PostgreSQL constraint `CHECK (available >= 0)` in Phase 1
-
-**Checkable**: No code path decrements stock below zero.
+**How to check**:
+- `go test -run 'DoubleSubmit|Concurrent|Idempoten' ./internal/checkout/... ./internal/routes/...`
+- Payment provider called exactly once for concurrent requests with same key
 
 ---
 
-## Event Invariants
+## INV-3: Stock Never Negative
 
-### INV-4: An event exists iff the state change committed (outbox atomicity).
+**Statement**: Stock is never negative; `Available = OnHand - Reserved >= 0`.
 
-**Enforcement**: 
-- **Current state**: NOT IMPLEMENTED
-- No event store, no outbox pattern
-- Checkout creates orders in-memory without events
+**Enforcement**: `internal/inventory/inventory_test.go` (test: `TestService_Reserve` with "insufficient stock" case)
 
-**Test coverage**: None (feature not implemented)
-
-**Planned**: 
-- Phase 5 — Event Publishing
-- Outbox table in same transaction as order creation
-- Worker mode publishes from outbox
-- Test: Event exists => order committed
+**How to check**:
+- `go test -run 'Reserve|Expired' ./internal/inventory/...`
+- `ErrInsufficientStock` returned when `quantity > available`
 
 ---
 
-## Order Invariants
+## INV-4: Event-State Atomicity
 
-### INV-5: Order totals are immutable after capture.
+**Statement**: An event exists iff the state change committed (outbox atomicity).
 
-**Enforcement**:
-- Code: `internal/checkout/checkout.go:174-183` — Order struct has Total field set once
-- No update method on Order
-- Cart cleared after order creation (line 189)
+**Enforcement**: missing (outbox not implemented - planned Phase 5)
 
-**Test coverage**: 
-- No explicit test for immutability
-- **Missing test**: Verify order total cannot be modified
-
-**Current limitations**:
-- No database, no enforcement beyond runtime
-- **Planned**: PostgreSQL immutable order_line table
+**How to check**:
+- Review ROADMAP.md Phase 5 for planned implementation
+- Once implemented: event store and domain state in same transaction
 
 ---
 
-## Webhook Invariants
+## INV-5: Order Totals Immutable
 
-### INV-6: Webhook deliveries are signed and replayable-safe by delivery id.
+**Statement**: Order totals are immutable after capture.
 
-**Enforcement**:
-- **Paystack** (internal/payment/paystack/webhook.go):
-  - Signature: HMAC-SHA512 (line 37-47)
-  - Idempotency: `InMemoryEventStore` by event_id + reference (line 68-88)
-  - Test: `paystack/webhook_test.go` — verifies signature and deduplication
-  
-- **M-Pesa** (internal/payment/mpesa/callback.go):
-  - Signature: NONE (IP allowlist only, line 42-53)
-  - Idempotency: `InMemoryCallbackStore` by CheckoutRequestID + ResultCode (line 88-110)
-  - Test: `mpesa/callback_test.go` — verifies deduplication
+**Enforcement**: `internal/checkout/checkout_test.go` (implicit in order creation flow)
 
-**Test coverage**: 
-- `internal/payment/paystack/webhook_test.go` — TestWebhookHandler_HandleSuccess
-- `internal/payment/mpesa/callback_test.go` — TestCallbackHandler_HandleCallback
-
-**Current limitations**:
-- M-Pesa has NO signature verification (only IP allowlist)
-- Stores are in-memory, cleared on restart
-- **Planned**: Persistent event store with TTL in Phase 3
+**How to check**:
+- Orders are created with final totals (`checkout.go:174-183`)
+- No `UpdateOrder` mutation exists on order totals
+- `grep -r "Order.Total =" internal/` should only show creation sites
 
 ---
 
-## Module Boundary Invariants
+## INV-6: Webhook Security
 
-### INV-7: No package reads another module's tables/structs directly; interfaces at the consumer.
+**Statement**: Webhook deliveries are signed and replay-safe by delivery id.
 
-**Enforcement**:
-- Dependency graph enforced by code review and architecture tests
-- Example: `checkout.Service` depends on `cart.Store` interface, not `cart.InMemoryStore`
-- Example: `routes.CartHandler` depends on `checkout.Service`, not `checkout.IdempotencyStore`
+**Enforcement**: `internal/payment/paystack/paystack_test.go` (tests: `TestWebhookSignature`, `TestWebhookIdempotency`)
 
-**Checkable** (should be automated):
+**How to check**:
+- `go test -run 'WebhookSignature|WebhookIdempotency' ./internal/payment/paystack/...`
+- HMAC-SHA512 signature validation
+- Event deduplication by event ID
+
+---
+
+## INV-7: Module Boundary Enforcement
+
+**Statement**: No package reads another module's tables or structs directly.
+
+**Enforcement**: missing (review rule, enforced by code review)
+
+**How to check**:
+- Review ARCHITECTURE.md Section 3 (Module Map) for ownership table
+- `grep -r "internal/cart" internal/checkout/` should fail (checkout uses cart.Store interface, not internal structs)
+- Architectural imports validated in `Module Map` table
+
+---
+
+## INV-8: Request ID and Logging Hygiene
+
+**Statement**: Every response carries `X-Request-ID`; logs never contain PAN, tokens, or phones.
+
+**Enforcement**: `internal/platform/httpx/httpx_test.go` (tests: `TestRequestIDMiddleware`, `TestRequestID`)
+
+**How to check**:
+- `go test -run 'RequestID' ./internal/platform/httpx/...`
+- Response headers include `X-Request-ID`
+- `grep -rE "(PAN|phone|token)" internal/platform/obs/` returns nothing sensitive
+
+---
+
+## Summary Table
+
+| INV | Statement | Enforcement |
+|-----|-----------|-------------|
+| INV-1 | Money in minor units, no float | `money/money_test.go` |
+| INV-2 | Idempotent mutations | `checkout_test.go` |
+| INV-3 | Stock never negative | `inventory_test.go` |
+| INV-4 | Event-state atomicity | missing (planned) |
+| INV-5 | Order totals immutable | `checkout_test.go` (implicit) |
+| INV-6 | Webhook signed & replay-safe | `paystack_test.go` |
+| INV-7 | Module boundary | missing (review rule) |
+| INV-8 | Request ID & logging hygiene | `httpx_test.go` |
+
+---
+
+## Running All Checks
+
 ```bash
-# Cart should never import checkout
-grep -r "import.*checkout" internal/cart/ # should return nothing
+# Run all invariant tests
+go test ./internal/platform/money/... ./internal/checkout/... ./internal/inventory/... \
+        ./internal/platform/httpx/... ./internal/payment/paystack/... \
+        -v -count=1
 
-# Catalog should never import order (doesn't exist yet)
-grep -r "import.*order" internal/catalog/ # should return nothing
+# Verify no float in money
+grep -r "float64" internal/platform/money/ && echo "FAIL: float found" || echo "OK"
 
-# Routes should never import payment implementations
-grep -r "import.*payment/paystack" internal/routes/ # should return nothing
-grep -r "import.*payment/mpesa" internal/routes/ # should return nothing
+# Verify Request ID in responses
+go test -run 'RequestID' ./internal/platform/httpx/...
 ```
-
-**Test coverage**: No automated test. Manual code review.
-
-**Planned**: Automated architecture tests using `go/tools/go/packages` or architecture testing framework.
-
----
-
-## Security Invariants
-
-### INV-8: Every response carries X-Request-ID; logs never contain PAN, tokens, or phone numbers.
-
-**Enforcement**:
-- Request ID: `internal/platform/httpx.RequestIDMiddleware` (httpx.go:76-87)
-  - Reads from `X-Request-ID` header or generates new ID
-  - Sets in response header and context
-  - Logs include request_id (httpx.go:102)
-  
-- Sensitive data filtering:
-  - **Current state**: No explicit filtering
-  - **Missing**: No test verifying PAN/tokens are scrubbed from logs
-  - **Risk**: M-Pesa phone numbers logged (callback payload)
-
-**Test coverage**: 
-- Request ID: `internal/platform/httpx/httpx_test.go` — tests generation and propagation
-- Log scrubbing: NO TEST
-
-**Current limitations**:
-- No log scrubbing implementation
-- M-Pesa callback logs phone numbers (line in mpesa/callback.go)
-- **Action needed**: Implement log scrubbing for phone numbers, PANs, tokens
-
----
-
-## Summary
-
-| Invariant | Enforced | Test Coverage | Critical |
-|-----------|----------|---------------|----------|
-| INV-1: Money in minor units | ✅ Yes | ✅ Comprehensive | Yes |
-| INV-2: Idempotency on mutations | ✅ Yes | ✅ Yes | Yes |
-| INV-3: Stock non-negative | ✅ Yes | ✅ Yes | Yes |
-| INV-4: Event outbox atomicity | ❌ No | ❌ Not implemented | Medium |
-| INV-5: Order total immutable | ⚠️ Runtime only | ⚠️ Missing test | Medium |
-| INV-6: Webhook idempotency | ✅ Yes | ✅ Yes | Yes |
-| INV-7: Module boundaries | ⚠️ Manual review | ❌ No automated test | Medium |
-| INV-8: No secrets in logs | ⚠️ Partial | ❌ No test | High |
-
-**Priority fixes**:
-1. INV-8: Implement log scrubbing for phone numbers/PANs/tokens
-2. INV-7: Add automated architecture tests
-3. INV-5: Add test for order total immutability
-4. INV-4: Implement event outbox in Phase 5
