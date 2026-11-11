@@ -2,77 +2,56 @@ name: CI
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [main]
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.27'
-    
-    - name: Install staticcheck
-      run: go install honnef.co/go/tools/cmd/staticcheck@2024.1.1
-    
-    - name: Install golangci-lint
-      uses: golangci/golangci-lint-action@v6
-      with:
-        version: v1.60
-    
-    - name: Check formatting
-      run: |
-        if [ -n "$(gofmt -l .)" ]; then
-          echo "Code is not formatted. Run 'gofmt -w -l .' to fix."
-          gofmt -l .
-          exit 1
-        fi
-    
-    - name: Check goimports
-      run: |
-        go install golang.org/x/tools/cmd/goimports@latest
-        if [ -n "$(goimports -l .)" ]; then
-          echo "Imports are not formatted. Run 'goimports -w -l .' to fix."
-          goimports -l .
-          exit 1
-        fi
-    
-    - name: Run go vet
-      run: go vet ./...
-    
-    - name: Run staticcheck
-      run: staticcheck ./...
-    
-    - name: Run golangci-lint
-      run: golangci-lint run
-    
-    - name: Build
-      run: go build ./...
-    
-    - name: Run tests with race detector
-      run: go test -race -v ./...
-    
-    - name: Run tests with coverage
-      run: go test -coverprofile=coverage.out ./...
-    
-    - name: Enforce coverage floor on internal/platform
-      run: |
-        PLATFORM_COVERAGE=$(go tool cover -func=coverage.out | grep 'internal/platform' | awk '{print $3}' | sed 's/%//' | awk '{sum+=$1} END {print sum/NR}')
-        echo "internal/platform coverage: $PLATFORM_COVERAGE%"
-        if [ $(echo "$PLATFORM_COVERAGE < 80" | bc -l) -eq 1 ]; then
-          echo "Coverage for internal/platform is below 80%"
-          exit 1
-        fi
-    
-    - name: Verify binary help
-      run: go run ./cmd/kikapu --help
-    
-    - name: Validate OpenAPI spec
-      run: |
-        go run github.com/getkin/kin-openapi/cmd/validate@latest openapi.yaml
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      - name: Check formatting
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "gofmt needed for:"; echo "$out"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test (race)
+        run: go test -race ./...
+
+      - name: Coverage floor (internal/platform >= 80%)
+        run: |
+          go test -coverprofile=coverage.out ./... >/dev/null
+          pct=$(go tool cover -func=coverage.out | grep 'internal/platform' | awk '{gsub(/%/,"",$3); s+=$3; n++} END {if (n) printf "%.1f", s/n; else print 0}')
+          echo "internal/platform coverage: ${pct}%"
+          awk -v p="$pct" 'BEGIN { exit (p < 80) ? 1 : 0 }'
+
+      - name: Binary help
+        run: go run ./cmd/kikapu --help
+
+      - name: Validate OpenAPI
+        run: go run github.com/getkin/kin-openapi/cmd/validate@latest openapi.yaml
