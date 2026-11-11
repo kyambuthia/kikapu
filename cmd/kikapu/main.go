@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -30,7 +29,6 @@ import (
 	"github.com/kyambuthia/kikapu/internal/routes"
 	"github.com/kyambuthia/kikapu/internal/search"
 	"github.com/kyambuthia/kikapu/internal/worker"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -226,10 +224,7 @@ func main() {
 		})
 	})
 
-	handler := obs.NewMiddleware(obs.MiddlewareOptions{
-		Logger:         logger,
-		RequestTracker: requestTracker,
-	})(httpx.RequestIDMiddleware(mux))
+	handler := httpx.RequestIDMiddleware(mux)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
