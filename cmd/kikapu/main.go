@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
 	"github.com/kyambuthia/kikapu/internal/routes"
 	"github.com/kyambuthia/kikapu/internal/worker"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -193,28 +195,31 @@ func main() {
 	}
 
 	cartHandler := routes.NewCartHandler(cartStore, checkoutSvc)
-
+	
 	mux := http.NewServeMux()
-
+	
 	catalogHandler.RegisterRoutes(mux)
 	cartHandler.RegisterRoutes(mux)
-
+	
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-
+	
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-
+	
 	mux.HandleFunc("/v1/version", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{
 			"version": version,
 			"commit":  commit,
 		})
 	})
-
-	handler := httpx.LoggingMiddleware(logger)(httpx.RequestIDMiddleware(mux))
+	
+	handler := obs.NewMiddleware(obs.MiddlewareOptions{
+		Logger:         logger,
+		RequestTracker: requestTracker,
+	})(httpx.RequestIDMiddleware(mux))
 
 	server := &http.Server{
 		Addr:              cfg.Addr,

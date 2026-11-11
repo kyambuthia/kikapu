@@ -9,7 +9,7 @@ build:
 	go build $(LDFLAGS) -o $(BINARY) ./cmd/kikapu
 
 test:
-	go test -race -v ./...
+	go test -race -coverprofile=coverage.out -v ./...
 
 coverage:
 	go test -coverprofile=coverage.out ./...
@@ -35,3 +35,21 @@ run:
 
 clean:
 	rm -f $(BINARY) coverage.out
+
+install-golangci-lint:
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.57.2
+
+obs-test:
+	go test -race -v ./internal/platform/obs/
+
+obs-bench:
+	go test -bench=Benchmark -run=^$ ./internal/platform/obs/ -benchmem
+
+obs-coverage:
+	go test -coverprofile=coverage.out ./internal/platform/obs/
+	go tool cover -func=coverage.out
+
+obs-verify:
+	gofmt -l internal/platform/obs/ && echo "Format check failed"
+	go vet ./internal/platform/obs/
+	staticcheck ./internal/platform/obs/
