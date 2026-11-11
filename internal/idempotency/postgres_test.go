@@ -19,7 +19,7 @@ func TestPostgresStore_ReplayReturnsSameResponse(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := sql.Open("postgres", testDBURL())
+	db, err := sql.Open("pgx", testDBURL())
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestPostgresStore_SameKeyDifferentHashReturnsConflict(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := sql.Open("postgres", testDBURL())
+	db, err := sql.Open("pgx", testDBURL())
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestPostgresStore_InFlightKeyReturnsError(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := sql.Open("postgres", testDBURL())
+	db, err := sql.Open("pgx", testDBURL())
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestPostgresStore_ExpiredRecordNotReplayed(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := sql.Open("postgres", testDBURL())
+	db, err := sql.Open("pgx", testDBURL())
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestPostgresStore_ConcurrentSameKeyExactlyOneExecutes(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := sql.Open("postgres", testDBURL())
+	db, err := sql.Open("pgx", testDBURL())
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
 	}
