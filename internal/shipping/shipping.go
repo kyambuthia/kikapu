@@ -73,6 +73,7 @@ func (zm *ZoneMatcher) FindZone(countryCode string) (Zone, error) {
 	return Zone{}, ErrNoShippingZone
 }
 
+// TODO: Replace hardcoded weight with actual product weight from variants
 func cartWeight(c *cart.Cart) int {
 	totalWeight := 0
 	for _, line := range c.Lines {

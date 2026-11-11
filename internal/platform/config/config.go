@@ -6,45 +6,45 @@ import (
 )
 
 type Config struct {
-	Addr                   string
-	Mode                   string
-	LogLevel               string
-	PaymentProvider        string
-	PaystackSecretKey      string
-	PaystackBaseURL        string
-	MpesaConsumerKey       string
-	MpesaConsumerSecret    string
-	MpesaShortCode         string
-	MpesaPasskey           string
-	MpesaCallbackURL       string
-	MpesaBaseURL           string
-	MpesaAllowedCIDRs      string
-	RateLimitCheckout     int
-	RateLimitAdmin        int
-	RateLimitPublicRead   int
-	RateLimitMaxBytes     int
+	Addr                    string
+	Mode                    string
+	LogLevel                string
+	PaymentProvider         string
+	PaystackSecretKey       string
+	PaystackBaseURL         string
+	MpesaConsumerKey        string
+	MpesaConsumerSecret     string
+	MpesaShortCode          string
+	MpesaPasskey            string
+	MpesaCallbackURL        string
+	MpesaBaseURL            string
+	MpesaAllowedCIDRs       string
+	RateLimitCheckout       int
+	RateLimitAdmin          int
+	RateLimitPublicRead     int
+	RateLimitMaxBytes       int
 	RateLimitTrustedProxies bool
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Addr:                  getEnv("KIKAPU_ADDR", ":8080"),
-		Mode:                  getEnv("KIKAPU_MODE", "api"),
-		LogLevel:              getEnv("KIKAPU_LOG_LEVEL", "info"),
-		PaymentProvider:       getEnv("PAYMENT_PROVIDER", "fake"),
-		PaystackSecretKey:     getEnv("PAYSTACK_SECRET_KEY", ""),
-		PaystackBaseURL:       getEnv("PAYSTACK_BASE_URL", ""),
-		MpesaConsumerKey:      getEnv("MPESA_CONSUMER_KEY", ""),
-		MpesaConsumerSecret:   getEnv("MPESA_CONSUMER_SECRET", ""),
-		MpesaShortCode:        getEnv("MPESA_SHORT_CODE", ""),
-		MpesaPasskey:          getEnv("MPESA_PASSKEY", ""),
-		MpesaCallbackURL:      getEnv("MPESA_CALLBACK_URL", ""),
-		MpesaBaseURL:          getEnv("MPESA_BASE_URL", ""),
-		MpesaAllowedCIDRs:     getEnv("MPESA_ALLOWED_CIDRS", ""),
-		RateLimitCheckout:     getEnvInt("KIKAPU_RATE_LIMIT_CHECKOUT", 10),
-		RateLimitAdmin:        getEnvInt("KIKAPU_RATE_LIMIT_ADMIN", 120),
-		RateLimitPublicRead:   getEnvInt("KIKAPU_RATE_LIMIT_PUBLIC_READ", 300),
-		RateLimitMaxBytes:     getEnvInt("KIKAPU_RATE_LIMIT_MAX_BYTES", 1048576),
+		Addr:                    getEnv("KIKAPU_ADDR", ":8080"),
+		Mode:                    getEnv("KIKAPU_MODE", "api"),
+		LogLevel:                getEnv("KIKAPU_LOG_LEVEL", "info"),
+		PaymentProvider:         getEnv("PAYMENT_PROVIDER", "fake"),
+		PaystackSecretKey:       getEnv("PAYSTACK_SECRET_KEY", ""),
+		PaystackBaseURL:         getEnv("PAYSTACK_BASE_URL", ""),
+		MpesaConsumerKey:        getEnv("MPESA_CONSUMER_KEY", ""),
+		MpesaConsumerSecret:     getEnv("MPESA_CONSUMER_SECRET", ""),
+		MpesaShortCode:          getEnv("MPESA_SHORT_CODE", ""),
+		MpesaPasskey:            getEnv("MPESA_PASSKEY", ""),
+		MpesaCallbackURL:        getEnv("MPESA_CALLBACK_URL", ""),
+		MpesaBaseURL:            getEnv("MPESA_BASE_URL", ""),
+		MpesaAllowedCIDRs:       getEnv("MPESA_ALLOWED_CIDRS", ""),
+		RateLimitCheckout:       getEnvInt("KIKAPU_RATE_LIMIT_CHECKOUT", 10),
+		RateLimitAdmin:          getEnvInt("KIKAPU_RATE_LIMIT_ADMIN", 120),
+		RateLimitPublicRead:     getEnvInt("KIKAPU_RATE_LIMIT_PUBLIC_READ", 300),
+		RateLimitMaxBytes:       getEnvInt("KIKAPU_RATE_LIMIT_MAX_BYTES", 1048576),
 		RateLimitTrustedProxies: getEnvBool("KIKAPU_RATE_LIMIT_TRUSTED_PROXIES", false),
 	}
 
