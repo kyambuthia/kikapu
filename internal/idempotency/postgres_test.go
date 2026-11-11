@@ -136,6 +136,45 @@ func TestPostgresStore_InFlightKeyReturnsError(t *testing.T) {
 	}
 }
 
+func TestPostgresStore_TimedOutPendingRecordAllowsRetry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+
+	db, err := sql.Open("pgx", dbURL)
+	if err != nil {
+		t.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	store := NewPostgresStore(db)
+	store.requestTimeout = 100 * time.Millisecond
+	ctx := context.Background()
+
+	key := "test-timeout-key"
+	requestHash := "POST:/v1/checkout:{\"cart_id\":\"123\"}"
+
+	_, _, err = store.Begin(ctx, key, requestHash)
+	if err != nil {
+		t.Fatalf("First Begin() error: %v", err)
+	}
+
+	time.Sleep(150 * time.Millisecond)
+
+	_, replay, err := store.Begin(ctx, key, requestHash)
+	if err != nil {
+		t.Fatalf("Begin() after timeout error: %v", err)
+	}
+	if replay {
+		t.Error("Begin() after timeout should not return replay=true")
+	}
+}
+
 func TestPostgresStore_ExpiredRecordNotReplayed(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
