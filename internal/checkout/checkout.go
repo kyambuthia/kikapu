@@ -1,12 +1,14 @@
 package checkout
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/kyambuthia/kikapu/internal/cart"
+	"github.com/kyambuthia/kikapu/internal/events"
 	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/payment"
 )
@@ -27,15 +29,15 @@ const (
 )
 
 type Order struct {
-	ID          string
-	CartID      string
-	Status      OrderStatus
-	Total       int64
-	Currency    string
-	PaymentID   string
-	Reservation string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	CartID       string
+	Status       OrderStatus
+	Total        int64
+	Currency     string
+	PaymentID    string
+	Reservations []string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type IdempotencyStore struct {
@@ -66,6 +68,8 @@ func (s *IdempotencyStore) GetOrderForKey(key string) (*Order, bool) {
 	}
 
 	orderCopy := *order
+	orderCopy.Reservations = make([]string, len(order.Reservations))
+	copy(orderCopy.Reservations, order.Reservations)
 	return &orderCopy, true
 }
 
@@ -77,6 +81,8 @@ func (s *IdempotencyStore) SaveOrder(key string, order *Order) error {
 		existingOrder, orderExists := s.orders[existingOrderID]
 		if orderExists {
 			orderCopy := *existingOrder
+			orderCopy.Reservations = make([]string, len(existingOrder.Reservations))
+			copy(orderCopy.Reservations, existingOrder.Reservations)
 			*order = orderCopy
 			return nil
 		}
@@ -84,6 +90,8 @@ func (s *IdempotencyStore) SaveOrder(key string, order *Order) error {
 
 	s.keys[key] = order.ID
 	orderCopy := *order
+	orderCopy.Reservations = make([]string, len(order.Reservations))
+	copy(orderCopy.Reservations, order.Reservations)
 	s.orders[order.ID] = &orderCopy
 	return nil
 }
@@ -98,31 +106,40 @@ func (s *IdempotencyStore) GetOrder(id string) (*Order, error) {
 	}
 
 	orderCopy := *order
+	orderCopy.Reservations = make([]string, len(order.Reservations))
+	copy(orderCopy.Reservations, order.Reservations)
 	return &orderCopy, nil
 }
 
 type Service struct {
 	cartStore       cart.Store
-	inventorySvc    *inventory.Service
+	inventoryStore  inventory.Store
 	paymentProvider payment.Provider
 	idempotency     *IdempotencyStore
+	outbox          events.Outbox
+	reservationTTL  time.Duration
 }
 
 func NewService(
 	cartStore cart.Store,
-	inventorySvc *inventory.Service,
+	inventoryStore inventory.Store,
 	paymentProvider payment.Provider,
 	idempotencyStore *IdempotencyStore,
+	outbox events.Outbox,
 ) *Service {
 	return &Service{
 		cartStore:       cartStore,
-		inventorySvc:    inventorySvc,
+		inventoryStore:  inventoryStore,
 		paymentProvider: paymentProvider,
 		idempotency:     idempotencyStore,
+		outbox:          outbox,
+		reservationTTL:  15 * time.Minute,
 	}
 }
 
 func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
+	ctx := context.Background()
+
 	if idempotencyKey == "" {
 		return nil, ErrIdempotencyKeyMissing
 	}
@@ -131,31 +148,28 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 		return existingOrder, nil
 	}
 
-	cart, err := s.cartStore.Get(cartID)
+	c, err := s.cartStore.Get(cartID)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(cart.Lines) == 0 {
+	if len(c.Lines) == 0 {
 		return nil, ErrEmptyCart
 	}
 
-	total, err := cart.Total()
+	total, err := c.Total()
 	if err != nil {
 		return nil, err
 	}
 
-	reservations := make(map[string]string)
-	for _, line := range cart.Lines {
-		reservationID := fmt.Sprintf("res_%s_%d", line.VariantID, time.Now().UnixNano())
-		_, err := s.inventorySvc.Reserve(reservationID, line.VariantID, line.Quantity)
+	reservations := make([]string, 0, len(c.Lines))
+	for _, line := range c.Lines {
+		res, err := s.inventoryStore.Reserve(ctx, line.VariantID, line.Quantity, s.reservationTTL)
 		if err != nil {
-			for resID := range reservations {
-				s.inventorySvc.Release(resID)
-			}
+			s.releaseAll(ctx, reservations)
 			return nil, err
 		}
-		reservations[line.VariantID] = reservationID
+		reservations = append(reservations, res.ID)
 	}
 
 	chargeResult, err := s.paymentProvider.Charge(payment.ChargeRequest{
@@ -165,32 +179,67 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 	})
 
 	if err != nil {
-		for _, resID := range reservations {
-			s.inventorySvc.Release(resID)
-		}
+		s.releaseAll(ctx, reservations)
 		return nil, err
 	}
 
+	for _, resID := range reservations {
+		if err := s.inventoryStore.Commit(ctx, resID); err != nil {
+		}
+	}
+
 	order := &Order{
-		ID:        fmt.Sprintf("ord_%d", time.Now().UnixNano()),
-		CartID:    cartID,
-		Status:    OrderStatusPaid,
-		Total:     total.Value,
-		Currency:  total.Currency,
-		PaymentID: chargeResult.ID,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:           fmt.Sprintf("ord_%d", time.Now().UnixNano()),
+		CartID:       cartID,
+		Status:       OrderStatusPaid,
+		Total:        total.Value,
+		Currency:     total.Currency,
+		PaymentID:    chargeResult.ID,
+		Reservations: reservations,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
 	}
 
 	if err := s.idempotency.SaveOrder(idempotencyKey, order); err != nil {
 		return nil, err
 	}
 
-	cart.Clear()
-	if err := s.cartStore.Save(cart); err != nil {
+	if s.outbox != nil {
+		createdEvent, err := events.NewEvent(events.EventTypeOrderCreated, order.ID, map[string]interface{}{
+			"order_id":   order.ID,
+			"cart_id":    cartID,
+			"status":     string(order.Status),
+			"total":      order.Total,
+			"currency":   order.Currency,
+			"created_at": order.CreatedAt,
+		})
+		if err == nil {
+			s.outbox.Append(ctx, nil, createdEvent)
+		}
+
+		paidEvent, err := events.NewEvent(events.EventTypeOrderPaid, order.ID, map[string]interface{}{
+			"order_id":    order.ID,
+			"payment_id":  chargeResult.ID,
+			"total":       order.Total,
+			"currency":    order.Currency,
+			"captured_at": time.Now(),
+		})
+		if err == nil {
+			s.outbox.Append(ctx, nil, paidEvent)
+		}
+	}
+
+	c.Clear()
+	if err := s.cartStore.Save(c); err != nil {
 	}
 
 	return order, nil
+}
+
+func (s *Service) releaseAll(ctx context.Context, reservations []string) {
+	for _, resID := range reservations {
+		s.inventoryStore.Release(ctx, resID)
+	}
 }
 
 func (s *Service) GetOrder(orderID string) (*Order, error) {

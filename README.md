@@ -49,9 +49,30 @@ Kikapu is designed as a lightweight, single-binary commerce engine that can run 
 make build
 ```
 
+### Database Setup
+
+Kikapu requires PostgreSQL for persistence. Set up your database:
+
+1. Create a PostgreSQL database:
+```bash
+createdb kikapu
+```
+
+2. Run migrations:
+```bash
+export DATABASE_URL="postgres://user:password@localhost:5432/kikapu?sslmode=disable"
+./kikapu --mode migrate
+```
+
+Or specify migrations directory:
+```bash
+./kikapu --mode migrate --migrations ./migrations
+```
+
 ### Run
 
 ```bash
+export DATABASE_URL="postgres://user:password@localhost:5432/kikapu?sslmode=disable"
 ./kikapu --addr :8080 --mode api
 ```
 
@@ -67,16 +88,26 @@ make run
 make test
 ```
 
+For integration tests with PostgreSQL:
+
+```bash
+export TEST_DATABASE_URL="postgres://user:password@localhost:5432/kikapu_test?sslmode=disable"
+make test
+```
+
+Integration tests skip cleanly when `TEST_DATABASE_URL` is not set.
+
 ## Configuration
 
 Configuration is environment-based:
 
  | Variable | Default | Description |
 |----------|---------|-------------|
- | `KIKAPU_ADDR` | `:8080` | Address to listen on |
- | `KIKAPU_MODE` | `api` | Operation mode (api\|worker) |
- | `KIKAPU_LOG_LEVEL` | `info` | Log level (debug\|info\|warn\|error) |
- | `PAYMENT_PROVIDER` | `fake` | Payment provider (fake\|paystack\|mpesa) |
+| `KIKAPU_ADDR` | `:8080` | Address to listen on |
+| `KIKAPU_MODE` | `api` | Operation mode (api\|worker\|migrate) |
+| `KIKAPU_LOG_LEVEL` | `info` | Log level (debug\|info\|warn\|error) |
+| `DATABASE_URL` | `` | PostgreSQL connection string (required for api/migrate modes) |
+| `PAYMENT_PROVIDER` | `fake` | Payment provider (fake\|paystack\|mpesa) |
  | `PAYSTACK_SECRET_KEY` | `` | Paystack secret key (required if PAYMENT_PROVIDER=paystack) |
  | `PAYSTACK_BASE_URL` | `` | Paystack API base URL (optional, defaults to https://api.paystack.co) |
  | `MPESA_CONSUMER_KEY` | `` | M-Pesa Daraja consumer key (required if PAYMENT_PROVIDER=mpesa) |
@@ -87,6 +118,58 @@ Configuration is environment-based:
  | `MPESA_BASE_URL` | `` | M-Pesa API base URL (optional, defaults to https://sandbox.safaricom.co.ke) |
  | `MPESA_ALLOWED_CIDRS` | `` | Comma-separated list of allowed CIDRs for M-Pesa callbacks (required for production) |
 
+## Database Schema
+
+Kikapu uses PostgreSQL with the following schema:
+
+### Tables
+
+- **products**: Product catalog (UUID primary keys, slug unique)
+- **variants**: Product variants with price in minor units
+- **product_channels**: Link table for multi-channel support
+- **orders**: Order headers with region-scoped order numbers
+- **order_lines**: Order line items
+- **refunds**: Refund records
+
+### Constraints
+
+- **Money**: All monetary values stored as `BIGINT` (minor units) with `CHECK >= 0` where applicable
+- **Order Numbers**: Unique per region with `UNIQUE (region_id, number)`
+- **Timestamps**: `created_at` and `updated_at` with `DEFAULT now()`
+- **No Cross-Module FKs**: Tables reference only within their module
+
+### Migrations
+
+Migrations are forward-only SQL files in `migrations/`. Each migration:
+
+- Has a version prefix (e.g., `0001_init.sql`)
+- Includes a comment header explaining the change
+- Is applied idempotently with advisory locking
+
+To create a new migration:
+
+```bash
+# Create migrations if directory doesn't exist
+mkdir -p migrations
+
+# Add your SQL migration file
+cat > migrations/0002_add_new_table.sql <<EOF
+-- Add new table for feature X
+-- Why: Support feature X requirements
+-- Reversible: no
+
+CREATE TABLE new_table (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO schema_migrations (version) VALUES ('0002');
+EOF
+
+# Run migration
+./kikapu --mode migrate
+```
+
 ## API Endpoints
 
  | Method | Path | Description |
@@ -95,17 +178,107 @@ Configuration is environment-based:
 | GET | `/readyz` | Readiness check - returns 200 |
 | GET | `/v1/version` | Version info - returns version and commit |
 | GET | `/v1/products` | List products with pagination |
-| GET | `/v1/products/{slug}` | Get a single product by slug |
-| GET | `/v1/regions` | List all regions |
-| GET | `/v1/channels` | List all sales channels |
-| POST | `/v1/carts` | Create a new cart |
-| GET | `/v1/carts/{id}` | Get a cart by ID |
-| DELETE | `/v1/carts/{id}` | Delete (clear) a cart |
-| POST | `/v1/carts/{id}/items` | Add an item to cart |
-| PATCH | `/v1/carts/{id}/items/{variantID}` | Update item quantity |
-| DELETE | `/v1/carts/{id}/items/{variantID}` | Remove item from cart |
- | POST | `/v1/checkout` | Place an order (requires Idempotency-Key header) |
- | POST | `/v1/webhooks/paystack` | Paystack webhook endpoint |
+ | GET | `/v1/products/{slug}` | Get a single product by slug |
+ | GET | `/v1/regions` | List all regions |
+ | GET | `/v1/channels` | List all sales channels |
+ | POST | `/v1/carts` | Create a new cart |
+ | GET | `/v1/carts/{id}` | Get a cart by ID |
+ | DELETE | `/v1/carts/{id}` | Delete (clear) a cart |
+ | POST | `/v1/carts/{id}/items` | Add an item to cart |
+ | PATCH | `/v1/carts/{id}/items/{variantID}` | Update item quantity |
+ | DELETE | `/v1/carts/{id}/items/{variantID}` | Remove item from cart |
+  | POST | `/v1/checkout` | Place an order (requires Idempotency-Key header) |
+  | POST | `/v1/webhooks/paystack` | Paystack webhook endpoint |
+ | GET | `/v1/orders/{id}` | Get order details |
+ | POST | `/v1/orders/{id}/refund` | Refund order (requires `Idempotency-Key`) |
+ | POST | `/v1/admin/keys` | Create API key (admin only) |
+ | GET | `/v1/admin/keys` | List API keys (admin only) |
+ | DELETE | `/v1/admin/keys/{id}` | Revoke API key (admin only) |
+
+## API Key Authentication
+
+Admin endpoints and partner surfaces use scoped API keys for authentication. API keys use the `Authorization` header with the Bearer scheme:
+
+```
+Authorization: Bearer kik_<key>
+```
+
+### Scopes
+
+API keys are scoped to specific permissions:
+
+| Scope | Description |
+|-------|-------------|
+| `products:read` | Read product catalog |
+| `orders:read` | Read order information |
+| `orders:write` | Create and modify orders |
+| `stock:read` | Read inventory levels |
+| `stock:write` | Modify inventory |
+| `admin:read` | Read admin data |
+| `admin:write` | Perform admin operations |
+
+### Creating API Keys
+
+Create a new API key:
+
+```bash
+curl -X POST http://localhost:8080/v1/admin/keys \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{
+    "name": "Integration Key",
+    "scopes": ["products:read", "orders:write"]
+  }'
+```
+
+Response:
+```json
+{
+  "id": "key_abc123...",
+  "name": "Integration Key",
+  "prefix": "kik_abc1",
+  "key": "kik_abc123def456...",
+  "scopes": ["products:read", "orders:write"]
+}
+```
+
+**Important**: The `key` field is shown **only once** when created. Store it securely; only the SHA-256 hash is stored.
+
+### Listing API Keys
+
+List all keys (shows prefix and scopes only, no key material):
+
+```bash
+curl -X GET http://localhost:8080/v1/admin/keys \
+  -H "Authorization: Bearer kik_admin_key"
+```
+
+### Revoking API Keys
+
+Revoke (not delete) a key:
+
+```bash
+curl -X DELETE http://localhost:8080/v1/admin/keys/key_abc123... \
+  -H "Authorization: Bearer kik_admin_key"
+```
+
+### Authentication Errors
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 401 | `missing_key` | No `Authorization` header provided |
+| 401 | `invalid_key` | Key not found or invalid format |
+| 401 | `expired_key` | Key has expired |
+| 401 | `revoked_key` | Key has been revoked |
+| 403 | `missing_scope` | Key lacks required scope (includes `required_scope` in response) |
+
+### Security Notes
+
+- Only the SHA-256 hash of the key is stored; the actual key is never persisted
+- Keys appear only once, in the create response (store securely)
+- Logs show only the key prefix (first 8 characters), never the full key
+- Constant-time comparison prevents timing attacks
+- `RevokedAt` takes precedence over `ExpiresAt`
 
 ## Products API Examples
 
@@ -523,6 +696,119 @@ CI runs automatically on push:
 - `go build ./...` must succeed
 - `go test ./...` must pass
 
+## Inventory & Reservations
+
+Kikapu uses a reservation-based inventory system to prevent overselling under concurrent access.
+
+### Reservation Lifecycle
+
+Every reservation follows one of three paths:
+
+```
+reserve → commit   (sale completed, stock removed)
+reserve → release  (customer cancelled, stock returned)
+reserve → expire   (timeout, stock returned automatically)
+```
+
+### Checkout Flow
+
+The checkout process enforces strict ordering to guarantee no overselling:
+
+1. **Reserve inventory** before charging payment
+2. **Commit** reservations on successful payment capture
+3. **Release** reservations on payment failure or cancellation
+4. **Expire** reservations via background process
+
+This contract ensures inventory is never oversold, even under high concurrency (proven by the 100-goroutine race test).
+
+### Stock Locations
+
+Inventory is tracked per variant per location:
+
+```json
+{
+  "variant_id": "var001",
+  "location_id": "warehouse-ke",
+  "on_hand": 100,
+  "reserved": 10
+}
+```
+
+The `Available()` calculation (`on_hand - reserved`) gives the sellable quantity.
+
+## Order Lifecycle
+
+Orders in Kikapu follow a strict state machine with guarded transitions and immutable totals after payment capture.
+
+### Status Transitions
+
+| from | to | allowed |
+|---|---|---|
+| pending | confirmed, cancelled | yes |
+| confirmed | fulfilled, cancelled, refunded | yes |
+| fulfilled | refunded | yes |
+| cancelled, refunded | — | terminal |
+
+### Payment Status
+
+Payment status tracks the financial state of an order:
+
+- `pending`: Payment not yet processed
+- `captured`: Payment successfully captured (totals locked)
+- `partially_refunded`: Some amount refunded
+- `refunded`: Full amount refunded
+
+### Refund Rules
+
+- Partial refunds are allowed
+- Cumulative refund amount must not exceed captured amount
+- Each refund gets a unique ID and timestamp
+- Two partial refunds that equal the total mark the order as `refunded`
+- A third refund attempt that exceeds captured amount is rejected with `ErrRefundExceedsCaptured`
+
+### Order Numbers
+
+Order numbers follow the format `KIK-000123`:
+- Sequential per region
+- Generated by `Counter` interface
+- In-memory implementation for current version
+
+### Totals Calculation
+
+Order totals are computed once and locked after payment capture:
+
+```
+GrandTotal = Subtotal + Tax - Discount
+```
+
+All monetary values are stored in minor units (cents, pence, etc.) using the `money.Amount` type.
+
+### HTTP Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/v1/orders/{id}` | Get order details (storefront) |
+| POST | `/v1/orders/{id}/refund` | Refund order (admin, requires `Idempotency-Key`) |
+
+#### Refund Example
+
+```bash
+curl -X POST http://localhost:8080/v1/orders/ord-001/refund \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: unique-refund-key-123" \
+  -d '{"amount": {"value": 5000, "currency": "USD"}, "reason": "Customer request"}'
+```
+
+Response:
+```json
+{
+  "id": "ref_20240115103000abc123",
+  "amount": {"value": 5000, "currency": "USD"},
+  "reason": "Customer request",
+  "created_at": "2024-01-15T10:30:00Z"
+}
+```
+
 ## Architecture Invariants
 
 - Single binary deployment
@@ -530,6 +816,213 @@ CI runs automatically on push:
 - Money represented in minor units (cents, pence, etc.)
 - All mutations are idempotent where possible
 - Small, focused commits
+
+## Promotions
+
+Kikapu supports percentage, fixed-amount, and free shipping promotions with deterministic stacking rules.
+
+### Stacking Order
+
+When multiple promotions apply, they are applied in a specific order:
+
+1. **Percentage promotions first** (applied to subtotal)
+2. **Fixed-amount promotions second** (applied after percentage discounts)
+3. **Ties broken by ID** (lexicographic order when multiple promotions of the same type exist)
+
+This order ensures predictable, deterministic discount calculations.
+
+### Single-Code Rule
+
+- **At most one code-based promotion per order**
+- Automatic promotions (no code required) can stack without limit
+- If multiple code promotions are provided, the first valid one is applied and subsequent ones are rejected with reason `one_code_per_order`
+
+### Promotion Application
+
+Promotions are validated before application:
+- Must be within the active date range (`StartsAt <= now < EndsAt`)
+- Must have remaining usage (if `UsageLimit` is set)
+- Must meet minimum subtotal requirement (if `MinSubtotal` is set)
+- Can target specific variants via `AppliesTo` (empty = all variants)
+- Rejected promotions never partially apply
+
+### Example
+
+```go
+// 10% off + 50 KES fixed discount on a 1000 KES order
+promotions := []Promotion{
+    {ID: "p1", Kind: KindPercentage, Value: 1000}  // 1000 bps = 10%
+    {ID: "p2", Kind: KindFixed, Value: 5000}       // 5000 minor units = 50 KES
+}
+applied, rejected := Apply(lines, promotions, time.Now())
+// Result: 10% off 1000 = 100 KES, then 50 KES fixed = 150 KES total discount
+```
+
+## Tax Calculation
+
+Kikapu calculates VAT/sales tax with cent-level accuracy using round-half-even (banker's rounding).
+
+### Rounding Rule
+
+- Per-line tax amounts are rounded using **round-half-even** (banker's rounding)
+- After rounding, a **residual adjustment** is applied to ensure the sum of per-line tax equals the total exactly
+- The adjustment is applied to the line with the largest tax amount
+
+### Inclusive vs Exclusive Tax
+
+- **Exclusive**: Tax is added on top of the line total (`tax = subtotal × rate`)
+- **Inclusive**: Tax is extracted from the total (`tax = total × rate / (10000 + rate)`)
+
+Tax rates are expressed in **basis points**:
+- 1600 bps = 16%
+- 2000 bps = 20%
+
+### Example: 16% VAT on 999 KES
+
+```go
+// 999 KES at 16% VAT (exclusive)
+lines := []order.Line{
+    {UnitPrice: money.NewAmount(99900, "KES"), Quantity: 1}  // 999.00 KES
+}
+perLine, total := TaxFor(lines, 1600, false)
+// 99900 * 1600 / 10000 = 15984 (159.84 KES)
+// Round-half-even: 159.84 KES (already an integer in minor units)
+```
+
+### Example: 3-Line Order with Residual
+
+```
+Line 1: 33.33 KES × 16% = 5.3328 → rounded to 5.33
+Line 2: 33.33 KES × 16% = 5.3328 → rounded to 5.33
+Line 3: 33.34 KES × 16% = 5.3344 → rounded to 5.33
+Sum: 15.99, Expected total: 16.00 → Residual: 0.01 added to Line 3 (largest)
+Final: [5.33, 5.33, 5.34] = 16.00 ✓
+```
+
+## Event System & Webhooks
+
+Kikapu provides a transactional outbox pattern for reliable event delivery. Every state change emits an event in the same transaction, ensuring data consistency.
+
+### Event Types
+
+| Event Type | Description | Trigger |
+|------------|-------------|---------|
+| `order.created` | Order placed successfully | Checkout completion |
+| `order.paid` | Payment captured for order | Successful payment |
+| `order.fulfilled` | Order marked as fulfilled | Fulfillment operation |
+| `order.refunded` | Refund processed for order | Refund operation |
+| `stock.reserved` | Inventory reserved | Stock reservation |
+| `stock.released` | Inventory released | Reservation release/expiry |
+
+### Event Envelope
+
+All events follow this structure:
+
+```json
+{
+  "id": "evt_abc123def456",
+  "type": "order.paid",
+  "version": 1,
+  "aggregate_id": "ord_123",
+  "occurred_at": "2024-01-15T10:30:00Z",
+  "data": {
+    "order_id": "ord_123",
+    "payment_id": "pay_abc",
+    "total": 10000,
+    "currency": "USD",
+    "captured_at": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+### Webhook Delivery
+
+Events are delivered to configured subscribers via HTTP POST requests with the following headers:
+
+| Header | Description |
+|--------|-------------|
+| `X-Kikapu-Event` | Event type (e.g., `order.paid`) |
+| `X-Kikapu-Delivery` | Unique delivery ID for this attempt |
+| `X-Kikapu-Signature` | Signature for verification |
+| `Content-Type` | `application/json` |
+
+### Signature Verification
+
+Webhook signatures use HMAC-SHA256. The signature header format:
+
+```
+t=1705315200,v1=9f2c...
+```
+
+To verify a webhook:
+
+1. Parse the header to extract `t` (timestamp) and `v1` (signature)
+2. Create the signed payload: `timestamp + "." + request_body`
+3. Compute HMAC-SHA256 with your webhook secret
+4. Compare using constant-time comparison
+5. Reject timestamps older than 5 minutes
+
+```go
+import "github.com/kyambuthia/kikapu/internal/webhook"
+
+func handleWebhook(w http.ResponseWriter, r *http.Request) {
+    body, _ := io.ReadAll(r.Body)
+    sigHeader := r.Header.Get("X-Kikapu-Signature")
+    
+    err := webhook.Verify(webhookSecret, sigHeader, body, 5*time.Minute)
+    if err != nil {
+        // Handle invalid signature
+        http.Error(w, "Invalid signature", 401)
+        return
+    }
+    
+    // Process event...
+}
+```
+
+### Retry Schedule
+
+Failed deliveries are retried with exponential backoff:
+
+| Attempt | Delay |
+|---------|-------|
+| 1 | 1 second |
+| 2 | 5 seconds |
+| 3 | 30 seconds |
+| 4+ | 5 minutes (capped) |
+
+After 8 failed attempts, the event is moved to dead-letter status.
+
+### Response Handling
+
+- **2xx**: Delivery marked as sent, no retry
+- **4xx**: Immediate dead-letter (client error)
+- **5xx/timeout**: Retry with backoff
+
+### Transactional Guarantee
+
+Events are appended to the outbox in the same transaction as the state change. This ensures:
+
+- If the order write fails, no event is created
+- If payment fails, no events are emitted
+- Events cannot be lost due to delivery failures
+
+### Subscribing to Events
+
+Configure subscriptions to receive specific event types:
+
+```go
+store := worker.NewInMemorySubscriberStore()
+store.Add(worker.Subscription{
+    ID:     "sub_123",
+    URL:    "https://example.com/webhooks",
+    Secret: "your-webhook-secret",
+    Types:  []string{"order.paid", "order.refunded"},
+    Active: true,
+})
+```
+
+Use `"*"` as an event type to subscribe to all events.
 
 ## License
 

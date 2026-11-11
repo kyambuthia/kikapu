@@ -6,23 +6,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/kyambuthia/kikapu/internal/cart"
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/inventory"
+	"github.com/kyambuthia/kikapu/internal/outbox"
 	"github.com/kyambuthia/kikapu/internal/payment"
 )
 
 func setupCartHandler() *CartHandler {
 	cartStore := cart.NewInMemoryStore()
-	inventorySvc := inventory.NewService(inventory.RealClock{}, 5*time.Minute)
+	inventoryStore := inventory.NewMemoryStore(nil)
 	paymentProvider := payment.NewFakeProvider(payment.NoFailure)
 	idempotencyStore := checkout.NewIdempotencyStore()
-	checkoutSvc := checkout.NewService(cartStore, inventorySvc, paymentProvider, idempotencyStore)
+	eventOutbox := outbox.NewInMemoryOutbox()
+	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
 
-	inventorySvc.SetStock("var001", 100)
-	inventorySvc.SetStock("var002", 100)
+	inventoryStore.SetLevel("var001", "loc1", 100)
+	inventoryStore.SetLevel("var002", "loc1", 100)
 
 	return NewCartHandler(cartStore, checkoutSvc)
 }

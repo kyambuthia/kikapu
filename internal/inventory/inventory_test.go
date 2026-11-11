@@ -1,49 +1,60 @@
 package inventory
 
 import (
+	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestService_Reserve(t *testing.T) {
+func TestLevel_Available(t *testing.T) {
 	tests := []struct {
 		name     string
-		stock    int
-		quantity int
-		wait     time.Duration
-		wantErr  error
+		onHand   int
+		reserved int
+		want     int
 	}{
-		{
-			name:     "reserve successfully",
-			stock:    10,
-			quantity: 5,
-			wantErr:  nil,
-		},
-		{
-			name:     "insufficient stock",
-			stock:    5,
-			quantity: 10,
-			wantErr:  ErrInsufficientStock,
-		},
-		{
-			name:     "exact stock",
-			stock:    5,
-			quantity: 5,
-			wantErr:  nil,
-		},
+		{"normal", 100, 20, 80},
+		{"fully reserved", 50, 50, 0},
+		{"no reservations", 100, 0, 100},
+		{"over reserved (should not happen)", 50, 75, -25},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			clock := &FakeClock{Current: time.Now()}
-			svc := NewService(clock, 5*time.Minute)
-			svc.SetStock("var001", tt.stock)
+			l := Level{OnHand: tt.onHand, Reserved: tt.reserved}
+			if got := l.Available(); got != tt.want {
+				t.Errorf("Available() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
 
-			reservation, err := svc.Reserve("res001", "var001", tt.quantity)
+func TestMemoryStore_Reserve(t *testing.T) {
+	ctx := context.Background()
+	clock := &FakeClock{Current: time.Now()}
+	store := NewMemoryStore(clock)
+	store.SetLevel("v1", "loc1", 100)
+
+	tests := []struct {
+		name    string
+		qty     int
+		wantErr error
+	}{
+		{"reserve successfully", 10, nil},
+		{"reserve more", 50, nil},
+		{"insufficient stock", 100, ErrInsufficientStock},
+		{"reserve exactly available", 40, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := store.Reserve(ctx, "v1", tt.qty, time.Minute)
 
 			if tt.wantErr != nil {
 				if err != tt.wantErr {
-					t.Errorf("Reserve() error = %v, wantErr %v", err, tt.wantErr)
+					t.Errorf("Reserve() error = %v, want %v", err, tt.wantErr)
 				}
 				return
 			}
@@ -53,82 +64,308 @@ func TestService_Reserve(t *testing.T) {
 				return
 			}
 
-			if reservation.Quantity != tt.quantity {
-				t.Errorf("Reserve() quantity = %d, want %d", reservation.Quantity, tt.quantity)
+			if res.Qty != tt.qty {
+				t.Errorf("Reserve() qty = %d, want %d", res.Qty, tt.qty)
+			}
+
+			if res.VariantID != "v1" {
+				t.Errorf("Reserve() variantID = %s, want v1", res.VariantID)
 			}
 		})
 	}
 }
 
-func TestService_Release(t *testing.T) {
+func TestMemoryStore_ReserveNeverOversells(t *testing.T) {
+	ctx := context.Background()
 	clock := &FakeClock{Current: time.Now()}
-	svc := NewService(clock, 5*time.Minute)
-	svc.SetStock("var001", 10)
+	store := NewMemoryStore(clock)
+	store.SetLevel("v1", "loc1", 10)
 
-	_, err := svc.Reserve("res001", "var001", 5)
+	var wg sync.WaitGroup
+	var ok atomic.Int64
+
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := store.Reserve(ctx, "v1", 1, time.Minute); err == nil {
+				ok.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := ok.Load(); got != 10 {
+		t.Fatalf("sold %d, want 10", got)
+	}
+}
+
+func TestMemoryStore_Release(t *testing.T) {
+	ctx := context.Background()
+	clock := &FakeClock{Current: time.Now()}
+	store := NewMemoryStore(clock)
+	store.SetLevel("v1", "loc1", 10)
+
+	res, err := store.Reserve(ctx, "v1", 5, time.Minute)
 	if err != nil {
 		t.Fatalf("Reserve() error: %v", err)
 	}
 
-	err = svc.Release("res001")
+	err = store.Release(ctx, res.ID)
 	if err != nil {
 		t.Errorf("Release() error: %v", err)
 	}
 
-	_, err = svc.Reserve("res001", "var001", 10)
+	_, err = store.Reserve(ctx, "v1", 10, time.Minute)
 	if err != nil {
 		t.Errorf("Release() should free stock: %v", err)
 	}
 
-	err = svc.Release("res999")
+	err = store.Release(ctx, "nonexistent")
 	if err != ErrReservationNotFound {
 		t.Errorf("Release() error = %v, want %v", err, ErrReservationNotFound)
 	}
 }
 
-func TestService_ExpiredReservation(t *testing.T) {
+func TestMemoryStore_Commit(t *testing.T) {
+	ctx := context.Background()
 	clock := &FakeClock{Current: time.Now()}
-	svc := NewService(clock, 5*time.Minute)
-	svc.SetStock("var001", 10)
+	store := NewMemoryStore(clock)
+	store.SetLevel("v1", "loc1", 10)
 
-	_, err := svc.Reserve("res001", "var001", 8)
+	res, err := store.Reserve(ctx, "v1", 5, time.Minute)
 	if err != nil {
 		t.Fatalf("Reserve() error: %v", err)
 	}
 
-	_, err = svc.Reserve("res002", "var001", 3)
-	if err != ErrInsufficientStock {
-		t.Errorf("Reserve() should fail with insufficient stock: %v", err)
-	}
-
-	clock.Add(6 * time.Minute)
-
-	_, err = svc.GetReservation("res001")
-	if err != ErrReservationExpired {
-		t.Errorf("GetReservation() error = %v, want %v", err, ErrReservationExpired)
-	}
-
-	_, err = svc.Reserve("res002", "var001", 3)
+	err = store.Commit(ctx, res.ID)
 	if err != nil {
-		t.Errorf("Reserve() should succeed after expiration: %v", err)
+		t.Errorf("Commit() error: %v", err)
+	}
+
+	levels, err := store.Levels(ctx, "v1")
+	if err != nil {
+		t.Fatalf("Levels() error: %v", err)
+	}
+	if len(levels) == 0 {
+		t.Fatal("Levels() returned empty")
+	}
+	if levels[0].OnHand != 5 {
+		t.Errorf("OnHand = %d, want 5", levels[0].OnHand)
+	}
+	if levels[0].Reserved != 0 {
+		t.Errorf("Reserved = %d, want 0", levels[0].Reserved)
+	}
+
+	err = store.Commit(ctx, "nonexistent")
+	if err != ErrReservationNotFound {
+		t.Errorf("Commit() error = %v, want %v", err, ErrReservationNotFound)
 	}
 }
 
-func TestService_CleanupExpired(t *testing.T) {
+func TestMemoryStore_CommitExpired(t *testing.T) {
+	ctx := context.Background()
 	clock := &FakeClock{Current: time.Now()}
-	svc := NewService(clock, 5*time.Minute)
-	svc.SetStock("var001", 10)
+	store := NewMemoryStore(clock)
+	store.SetLevel("v1", "loc1", 10)
 
-	_, err := svc.Reserve("res001", "var001", 5)
+	res, err := store.Reserve(ctx, "v1", 5, time.Minute)
 	if err != nil {
 		t.Fatalf("Reserve() error: %v", err)
 	}
 
-	clock.Add(6 * time.Minute)
+	clock.Add(2 * time.Minute)
 
-	svc.CleanupExpired()
+	err = store.Commit(ctx, res.ID)
+	if err != ErrReservationExpired {
+		t.Errorf("Commit() error = %v, want %v", err, ErrReservationExpired)
+	}
 
-	if len(svc.reservations) != 0 {
-		t.Errorf("CleanupExpired() reservations = %d, want 0", len(svc.reservations))
+	levels, _ := store.Levels(ctx, "v1")
+	if levels[0].Reserved != 0 {
+		t.Errorf("Expired reservation should free reserved stock, got %d", levels[0].Reserved)
+	}
+}
+
+func TestMemoryStore_ExpireDue(t *testing.T) {
+	ctx := context.Background()
+	clock := &FakeClock{Current: time.Now()}
+	store := NewMemoryStore(clock)
+	store.SetLevel("v1", "loc1", 10)
+
+	store.Reserve(ctx, "v1", 3, time.Minute)
+	store.Reserve(ctx, "v1", 2, time.Minute)
+
+	clock.Add(2 * time.Minute)
+
+	count, err := store.ExpireDue(ctx, clock.Now())
+	if err != nil {
+		t.Fatalf("ExpireDue() error: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("ExpireDue() count = %d, want 2", count)
+	}
+
+	levels, _ := store.Levels(ctx, "v1")
+	if levels[0].Reserved != 0 {
+		t.Errorf("Reserved = %d, want 0 after expiry", levels[0].Reserved)
+	}
+}
+
+func TestMemoryStore_MultipleLocations(t *testing.T) {
+	ctx := context.Background()
+	clock := &FakeClock{Current: time.Now()}
+	store := NewMemoryStore(clock)
+	store.SetLevel("v1", "loc1", 10)
+	store.SetLevel("v1", "loc2", 20)
+
+	res, err := store.Reserve(ctx, "v1", 15, time.Minute)
+	if err != nil {
+		t.Fatalf("Reserve() error: %v", err)
+	}
+
+	if res.LocationID != "loc2" {
+		t.Errorf("Should reserve from location with more stock, got %s", res.LocationID)
+	}
+
+	levels, _ := store.Levels(ctx, "v1")
+	for _, l := range levels {
+		if l.LocationID == "loc2" {
+			if l.Reserved != 15 {
+				t.Errorf("loc2 reserved = %d, want 15", l.Reserved)
+			}
+		} else if l.LocationID == "loc1" {
+			if l.Reserved != 0 {
+				t.Errorf("loc1 reserved = %d, want 0", l.Reserved)
+			}
+		}
+	}
+}
+
+func TestMemoryStore_ReservesFromSmallestSufficientLocation(t *testing.T) {
+	ctx := context.Background()
+	clock := &FakeClock{Current: time.Now()}
+	store := NewMemoryStore(clock)
+	store.SetLevel("v1", "loc1", 100)
+	store.SetLevel("v1", "loc2", 20)
+
+	res, err := store.Reserve(ctx, "v1", 15, time.Minute)
+	if err != nil {
+		t.Fatalf("Reserve() error: %v", err)
+	}
+
+	if res.LocationID != "loc2" {
+		t.Errorf("Should reserve from smallest sufficient location, got %s", res.LocationID)
+	}
+}
+
+func TestMemoryStore_Levels(t *testing.T) {
+	ctx := context.Background()
+	clock := &FakeClock{Current: time.Now()}
+	store := NewMemoryStore(clock)
+
+	levels, err := store.Levels(ctx, "nonexistent")
+	if err != nil {
+		t.Errorf("Levels() error: %v", err)
+	}
+	if levels != nil {
+		t.Errorf("Levels() should return nil for nonexistent variant")
+	}
+
+	store.SetLevel("v1", "loc1", 10)
+	store.SetLevel("v1", "loc2", 20)
+
+	levels, err = store.Levels(ctx, "v1")
+	if err != nil {
+		t.Fatalf("Levels() error: %v", err)
+	}
+	if len(levels) != 2 {
+		t.Errorf("Levels() returned %d levels, want 2", len(levels))
+	}
+}
+
+func TestMemoryStore_ConcurrentReserveCommit(t *testing.T) {
+	ctx := context.Background()
+	clock := &FakeClock{Current: time.Now()}
+	store := NewMemoryStore(clock)
+	store.SetLevel("v1", "loc1", 100)
+
+	var wg sync.WaitGroup
+	var committed atomic.Int32
+	var released atomic.Int32
+
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(commit bool) {
+			defer wg.Done()
+			res, err := store.Reserve(ctx, "v1", 1, time.Minute)
+			if err != nil {
+				return
+			}
+
+			if commit {
+				if store.Commit(ctx, res.ID) == nil {
+					committed.Add(1)
+				}
+			} else {
+				if store.Release(ctx, res.ID) == nil {
+					released.Add(1)
+				}
+			}
+		}(i%2 == 0)
+	}
+	wg.Wait()
+
+	levels, _ := store.Levels(ctx, "v1")
+	committedCount := int(committed.Load())
+	expectedOnHand := 100 - committedCount
+	if levels[0].OnHand != expectedOnHand {
+		t.Errorf("OnHand = %d, want %d", levels[0].OnHand, expectedOnHand)
+	}
+	if levels[0].Reserved != 0 {
+		t.Errorf("Reserved = %d, want 0 (all reservations should be committed or released)", levels[0].Reserved)
+	}
+}
+
+func TestMemoryStore_DoubleOperations(t *testing.T) {
+	ctx := context.Background()
+	clock := &FakeClock{Current: time.Now()}
+	store := NewMemoryStore(clock)
+	store.SetLevel("v1", "loc1", 10)
+
+	res, _ := store.Reserve(ctx, "v1", 5, time.Minute)
+
+	store.Commit(ctx, res.ID)
+	err := store.Commit(ctx, res.ID)
+	if err != ErrReservationNotFound {
+		t.Errorf("Second commit should fail with ErrReservationNotFound, got %v", err)
+	}
+
+	res2, _ := store.Reserve(ctx, "v1", 2, time.Minute)
+	store.Release(ctx, res2.ID)
+	err = store.Release(ctx, res2.ID)
+	if err != ErrReservationNotFound {
+		t.Errorf("Second release should fail with ErrReservationNotFound, got %v", err)
+	}
+}
+
+func TestMemoryStore_ReleaseNonExistentLocation(t *testing.T) {
+	ctx := context.Background()
+	clock := &FakeClock{Current: time.Now()}
+	store := NewMemoryStore(clock)
+
+	res := &Reservation{
+		ID:         "test-res",
+		VariantID:  "v1",
+		LocationID: "loc1",
+		Qty:        5,
+		ExpiresAt:  clock.Now().Add(time.Minute),
+		CreatedAt:  clock.Now(),
+	}
+	store.reservations[res.ID] = res
+
+	err := store.Release(ctx, res.ID)
+	if err != nil {
+		t.Errorf("Release() should handle missing location gracefully: %v", err)
 	}
 }

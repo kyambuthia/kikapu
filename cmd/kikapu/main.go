@@ -15,6 +15,8 @@ import (
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/inventory"
+	"github.com/kyambuthia/kikapu/internal/migrate"
+	"github.com/kyambuthia/kikapu/internal/outbox"
 	"github.com/kyambuthia/kikapu/internal/payment"
 	"github.com/kyambuthia/kikapu/internal/payment/mpesa"
 	"github.com/kyambuthia/kikapu/internal/payment/paystack"
@@ -22,6 +24,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
 	"github.com/kyambuthia/kikapu/internal/routes"
+	"github.com/kyambuthia/kikapu/internal/worker"
 )
 
 var (
@@ -31,7 +34,8 @@ var (
 
 func main() {
 	addr := flag.String("addr", ":8080", "address to listen on")
-	mode := flag.String("mode", "api", "operation mode (api|worker)")
+	mode := flag.String("mode", "api", "operation mode (api|worker|migrate)")
+	migrationsDir := flag.String("migrations", "migrations", "migrations directory")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -56,6 +60,24 @@ func main() {
 		level = slog.LevelError
 	}
 	logger := obs.NewLogger(level)
+
+	if cfg.Mode == "migrate" {
+		databaseURL := os.Getenv("DATABASE_URL")
+		if databaseURL == "" {
+			fmt.Fprintln(os.Stderr, "DATABASE_URL environment variable is required for migration")
+			os.Exit(1)
+		}
+
+		logger.Info("running migrations", "migrations_dir", *migrationsDir)
+
+		if err := migrate.Run(databaseURL, *migrationsDir); err != nil {
+			logger.Error("migration failed", "error", err)
+			os.Exit(1)
+		}
+
+		logger.Info("migrations completed successfully")
+		return
+	}
 
 	if cfg.Mode != "api" {
 		logger.Info("starting in worker mode", "mode", cfg.Mode)
@@ -83,7 +105,7 @@ func main() {
 	catalogHandler := routes.NewCatalogHandler(repo)
 
 	cartStore := cart.NewInMemoryStore()
-	inventorySvc := inventory.NewService(inventory.RealClock{}, 5*time.Minute)
+	inventoryStore := inventory.NewMemoryStore(nil)
 
 	var paymentProvider payment.Provider
 	switch cfg.PaymentProvider {
@@ -115,8 +137,18 @@ func main() {
 		paymentProvider = payment.NewFakeProvider(payment.NoFailure)
 	}
 
+	eventOutbox := outbox.NewInMemoryOutbox()
 	idempotencyStore := checkout.NewIdempotencyStore()
-	checkoutSvc := checkout.NewService(cartStore, inventorySvc, paymentProvider, idempotencyStore)
+	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
+
+	subscriberStore := worker.NewInMemorySubscriberStore()
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	deliverer := worker.NewDeliverer(httpClient, eventOutbox, subscriberStore)
+
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	go deliverer.Run(workerCtx, 5*time.Second)
 
 	cartHandler := routes.NewCartHandler(cartStore, checkoutSvc)
 
@@ -165,6 +197,8 @@ func main() {
 	<-quit
 
 	logger.Info("shutting down server")
+
+	workerCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
