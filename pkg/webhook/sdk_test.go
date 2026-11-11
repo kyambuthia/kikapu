@@ -2,7 +2,6 @@ package webhook
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/kyambuthia/kikapu/internal/webhook"
 )
 
 func TestVerify(t *testing.T) {
@@ -75,7 +72,7 @@ func TestVerify(t *testing.T) {
 			header:  "",
 			body:    body,
 			maxAge:  fiveMinutes,
-			wantErr: webhook.ErrMissingSignature,
+			wantErr: ErrMissingSignature,
 		},
 		{
 			name:    "header with no parts",
@@ -83,7 +80,7 @@ func TestVerify(t *testing.T) {
 			header:  " ",
 			body:    body,
 			maxAge:  fiveMinutes,
-			wantErr: webhook.ErrMalformedSignature,
+			wantErr: ErrMalformedSignature,
 		},
 		{
 			name:    "invalid timestamp value",
@@ -91,7 +88,7 @@ func TestVerify(t *testing.T) {
 			header:  "t=invalid,v1=fake",
 			body:    body,
 			maxAge:  fiveMinutes,
-			wantErr: errors.New("invalid signature"),
+			wantErr: ErrMalformedSignature,
 		},
 	}
 
@@ -228,11 +225,15 @@ func TestParseSignatureHeader(t *testing.T) {
 
 func TestHandlerServeHTTP(t *testing.T) {
 	secret := "test-secret"
+	now := time.Now()
 	handler := Handler{
 		Secret:     secret,
 		Tolerance:  5 * time.Minute,
 		Idempotent: func(ctx context.Context, id string) (bool, error) { return false, nil },
 	}
+
+	body := []byte(`{"test":"data"}`)
+	validSigHeader := BuildSignatureHeader(now, Sign(secret, now, body))
 
 	tests := []struct {
 		name       string
@@ -244,7 +245,7 @@ func TestHandlerServeHTTP(t *testing.T) {
 	}{
 		{
 			name:       "missing signature - 401",
-			body:       []byte(`{"test":"data"}`),
+			body:       body,
 			sigHeader:  "",
 			deliveryID: "delivery_001",
 			event:      "order.paid",
@@ -252,15 +253,15 @@ func TestHandlerServeHTTP(t *testing.T) {
 		},
 		{
 			name:       "invalid signature - 401",
-			body:       []byte(`{"test":"data"}`),
-			sigHeader:  "t=" + strconv.FormatInt(time.Now().Unix(), 10) + ",v1=fake",
+			body:       body,
+			sigHeader:  "t=" + strconv.FormatInt(now.Unix(), 10) + ",v1=fake",
 			deliveryID: "delivery_001",
 			event:      "order.paid",
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
 			name:       "stale timestamp - 401",
-			body:       []byte(`{"test":"data"}`),
+			body:       body,
 			sigHeader:  "t=1577836800,v1=fake",
 			deliveryID: "delivery_001",
 			event:      "order.paid",
@@ -268,24 +269,24 @@ func TestHandlerServeHTTP(t *testing.T) {
 		},
 		{
 			name:       "missing delivery ID - dedupe skipped - 200 OK",
-			body:       []byte(`{"test":"data"}`),
-			sigHeader:  "t=" + strconv.FormatInt(time.Now().Unix(), 10) + ",v1=fake_sig",
+			body:       body,
+			sigHeader:  validSigHeader,
 			deliveryID: "",
 			event:      "order.paid",
 			wantStatus: http.StatusOK,
 		},
 		{
 			name:       "idempotent key returns true - 200 OK (skip processing)",
-			body:       []byte(`{"test":"data"}`),
-			sigHeader:  "t=" + strconv.FormatInt(time.Now().Unix(), 10) + ",v1=fake",
+			body:       body,
+			sigHeader:  validSigHeader,
 			deliveryID: "already_processed",
 			event:      "order.paid",
 			wantStatus: http.StatusOK,
 		},
 		{
 			name:       "store key fails - 500 error",
-			body:       []byte(`{"test":"data"}`),
-			sigHeader:  "t=" + strconv.FormatInt(time.Now().Unix(), 10) + ",v1=fake",
+			body:       body,
+			sigHeader:  validSigHeader,
 			deliveryID: "should_fail",
 			event:      "order.paid",
 			wantStatus: http.StatusInternalServerError,
@@ -303,17 +304,18 @@ func TestHandlerServeHTTP(t *testing.T) {
 
 			w := httptest.NewRecorder()
 
-			if tt.name == "store key fails on valid signature" {
-				handler.StoreKey = func(ctx context.Context, id string) error {
+			testHandler := handler
+			if tt.name == "store key fails - 500 error" {
+				testHandler.StoreKey = func(ctx context.Context, id string) error {
 					return fmt.Errorf("storage failure")
 				}
-			} else if tt.name == "idempotent key returns true" {
-				handler.Idempotent = func(ctx context.Context, id string) (bool, error) {
+			} else if tt.name == "idempotent key returns true - 200 OK (skip processing)" {
+				testHandler.Idempotent = func(ctx context.Context, id string) (bool, error) {
 					return true, nil
 				}
 			}
 
-			handler.ServeHTTP(w, r)
+			testHandler.ServeHTTP(w, r)
 
 			if w.Code != tt.wantStatus {
 				t.Errorf("Handler.ServeHTTP() status = %v, want %v", w.Code, tt.wantStatus)
@@ -364,25 +366,26 @@ func TestInMemoryIdempotentStore(t *testing.T) {
 
 func TestHandlerIntegration(t *testing.T) {
 	secret := "test-secret"
+	now := time.Now()
 	handler := Handler{
 		Secret:    secret,
 		Tolerance: 5 * time.Minute,
 	}
 
 	t.Run("happy path - full flow", func(t *testing.T) {
+		body := []byte(`{"test":"data"}`)
 		r := httptest.NewRequest("POST", "/webhook", nil)
 		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("X-Kikapu-Signature", "t="+strconv.FormatInt(time.Now().Unix(), 10)+",v1=fake_sig")
+		r.Header.Set("X-Kikapu-Signature", BuildSignatureHeader(now, Sign(secret, now, body)))
 		r.Header.Set("X-Kikapu-Delivery", "test_delivery")
 		r.Header.Set("X-Kikapu-Event", "order.paid")
-		r.Body = io.NopCloser(strings.NewReader(`{"test":"data"}`))
+		r.Body = io.NopCloser(strings.NewReader(string(body)))
 
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 
-		// With fake signature, we expect 401
-		if w.Code != http.StatusUnauthorized {
-			t.Errorf("Expected 401, got %d", w.Code)
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", w.Code)
 		}
 	})
 
@@ -396,19 +399,20 @@ func TestHandlerIntegration(t *testing.T) {
 				return store.Exists(ctx, id)
 			},
 			StoreKey: func(ctx context.Context, id string) error {
-				return nil
+				return store.Save(ctx, id)
 			},
 		}
 
 		ctx := context.Background()
+		body := []byte(`{"test":1}`)
 
 		// First request - processes and saves
 		r1 := httptest.NewRequest("POST", "/webhook", nil)
 		r1.Header.Set("Content-Type", "application/json")
-		r1.Header.Set("X-Kikapu-Signature", "t="+strconv.FormatInt(time.Now().Unix(), 10)+",v1=fake_sig")
+		r1.Header.Set("X-Kikapu-Signature", BuildSignatureHeader(now, Sign(secret, now, body)))
 		r1.Header.Set("X-Kikapu-Delivery", "first_delivery")
 		r1.Header.Set("X-Kikapu-Event", "order.paid")
-		r1.Body = io.NopCloser(strings.NewReader(`{"test":1}`))
+		r1.Body = io.NopCloser(strings.NewReader(string(body)))
 
 		w1 := httptest.NewRecorder()
 		idempotentHandler.ServeHTTP(w1, r1)
@@ -416,10 +420,10 @@ func TestHandlerIntegration(t *testing.T) {
 		// Second request with same delivery ID - should be skipped
 		r2 := httptest.NewRequest("POST", "/webhook", nil)
 		r2.Header.Set("Content-Type", "application/json")
-		r2.Header.Set("X-Kikapu-Signature", "t="+strconv.FormatInt(time.Now().Unix(), 10)+",v1=fake_sig")
+		r2.Header.Set("X-Kikapu-Signature", BuildSignatureHeader(now, Sign(secret, now, body)))
 		r2.Header.Set("X-Kikapu-Delivery", "first_delivery")
 		r2.Header.Set("X-Kikapu-Event", "order.paid")
-		r2.Body = io.NopCloser(strings.NewReader(`{"test":2}`))
+		r2.Body = io.NopCloser(strings.NewReader(string(body)))
 
 		w2 := httptest.NewRecorder()
 		idempotentHandler.ServeHTTP(w2, r2)
@@ -454,9 +458,11 @@ func TestEdgeCases(t *testing.T) {
 
 	t.Run("future timestamp", func(t *testing.T) {
 		futureTime := now.Add(24 * time.Hour)
-		header := "t=" + strconv.FormatInt(futureTime.Unix(), 10) + ",v1=fake_sig"
+		body := []byte("{}")
+		sig := Sign(secret, futureTime, body)
+		header := BuildSignatureHeader(futureTime, sig)
 
-		err := Verify(secret, header, []byte("{}"), tenMinutes)
+		err := Verify(secret, header, body, tenMinutes)
 		if err != nil {
 			t.Errorf("Expected no error for future timestamp, got: %v", err)
 		}
