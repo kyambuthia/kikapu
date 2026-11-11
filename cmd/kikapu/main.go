@@ -16,6 +16,8 @@ import (
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/payment"
+	"github.com/kyambuthia/kikapu/internal/payment/mpesa"
+	"github.com/kyambuthia/kikapu/internal/payment/paystack"
 	"github.com/kyambuthia/kikapu/internal/platform/config"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
@@ -82,7 +84,37 @@ func main() {
 
 	cartStore := cart.NewInMemoryStore()
 	inventorySvc := inventory.NewService(inventory.RealClock{}, 5*time.Minute)
-	paymentProvider := payment.NewFakeProvider(payment.NoFailure)
+
+	var paymentProvider payment.Provider
+	switch cfg.PaymentProvider {
+	case "paystack":
+		psClient, err := paystack.New(paystack.Config{
+			BaseURL:   cfg.PaystackBaseURL,
+			SecretKey: cfg.PaystackSecretKey,
+		})
+		if err != nil {
+			logger.Error("failed to create Paystack client", "error", err)
+			os.Exit(1)
+		}
+		paymentProvider = psClient
+	case "mpesa":
+		mpesaClient, err := mpesa.New(mpesa.Config{
+			BaseURL:        cfg.MpesaBaseURL,
+			ConsumerKey:    cfg.MpesaConsumerKey,
+			ConsumerSecret: cfg.MpesaConsumerSecret,
+			ShortCode:      cfg.MpesaShortCode,
+			Passkey:        cfg.MpesaPasskey,
+			CallbackURL:    cfg.MpesaCallbackURL,
+		})
+		if err != nil {
+			logger.Error("failed to create M-Pesa client", "error", err)
+			os.Exit(1)
+		}
+		paymentProvider = mpesaClient
+	default:
+		paymentProvider = payment.NewFakeProvider(payment.NoFailure)
+	}
+
 	idempotencyStore := checkout.NewIdempotencyStore()
 	checkoutSvc := checkout.NewService(cartStore, inventorySvc, paymentProvider, idempotencyStore)
 
