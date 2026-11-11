@@ -34,7 +34,7 @@ func (rc *RequestCounter) Get(route, method, status string) int {
 	if route == "" || method == "" || status == "" {
 		return 0
 	}
-	
+
 	rc.mu.RLock()
 	defer rc.mu.RUnlock()
 
@@ -62,7 +62,7 @@ func (rd *RequestDuration) Observe(duration float64, route string) {
 	if route == "" || duration < 0 {
 		return
 	}
-	
+
 	rd.mu.Lock()
 	defer rd.mu.Unlock()
 
@@ -122,13 +122,13 @@ func formatCounterKey(route, method, status string) string {
 	if route == "" || method == "" || status == "" {
 		return ""
 	}
-	
+
 	parts := []string{
 		fmt.Sprintf("method=\"%s\"", method),
 		fmt.Sprintf("route=\"%s\"", route),
 		fmt.Sprintf("status=\"%s\"", status),
 	}
-	
+
 	return "kikapu_http_requests_total{" + joinQuoted(parts) + "}"
 }
 
@@ -140,7 +140,7 @@ func joinQuoted(parts []string) string {
 	if length == 1 {
 		return parts[0]
 	}
-	
+
 	result := make([]byte, 0, length*20)
 	for i, part := range parts {
 		if i > 0 {
@@ -195,4 +195,3 @@ func normalizeRoute(rawPath string) string {
 type ctxKeyRequestID struct{}
 
 type urlKey struct{}
-

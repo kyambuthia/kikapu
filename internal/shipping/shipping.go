@@ -81,10 +81,6 @@ func cartWeight(c *cart.Cart) int {
 	return totalWeight
 }
 
-func subtotal(c *cart.Cart) (money.Amount, error) {
-	return c.Total()
-}
-
 func RatesFor(zone Zone, rates []Rate, cart *cart.Cart, cartsSubtotal money.Amount, currency string) ([]Applicable, error) {
 	var applicable []Applicable
 

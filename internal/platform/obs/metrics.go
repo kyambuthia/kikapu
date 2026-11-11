@@ -28,7 +28,7 @@ func (m *Metrics) Record(route, method, status string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := fmt.Sprintf("kikapu_http_requests_total{route=\"%s\",method=\"%s\",status=\"%s\"}", 
+	key := fmt.Sprintf("kikapu_http_requests_total{route=\"%s\",method=\"%s\",status=\"%s\"}",
 		route, method, status)
 	m.counters[key]++
 }
@@ -45,7 +45,7 @@ func (m *Metrics) Observe(route string, duration float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := fmt.Sprintf("kikapu_http_request_duration_seconds_bucket{route=\"%s\",le=\"%.3f\"}", 
+	key := fmt.Sprintf("kikapu_http_request_duration_seconds_bucket{route=\"%s\",le=\"%.3f\"}",
 		route, duration)
 	m.counters[key]++
 }
