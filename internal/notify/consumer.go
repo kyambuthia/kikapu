@@ -1,10 +1,16 @@
 package notify
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net/smtp"
 	"strings"
+	"time"
 
 	"github.com/kyambuthia/kikapu/internal/events"
 )
