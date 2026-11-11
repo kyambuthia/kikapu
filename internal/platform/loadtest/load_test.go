@@ -1,6 +1,8 @@
 package loadtest
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -75,5 +77,44 @@ func TestHTTPClientTimeoutValue(t *testing.T) {
 
 	if expectedTimeout != 30*time.Second {
 		t.Errorf("HTTP timeout should be fixed at 30s, not based on test duration")
+	}
+}
+
+func TestRequestCatalogListHandlesError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("intentional failure")
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 1 * time.Second}
+	latency := requestCatalogList(client, server.URL)
+	if latency != 0 {
+		t.Errorf("expected latency 0 on error, got %v", latency)
+	}
+}
+
+func TestRequestProductDetailHandlesError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("intentional failure")
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 1 * time.Second}
+	latency := requestProductDetail(client, server.URL)
+	if latency != 0 {
+		t.Errorf("expected latency 0 on error, got %v", latency)
+	}
+}
+
+func TestRequestCheckoutHandlesError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("intentional failure")
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 1 * time.Second}
+	latency := requestCheckout(client, server.URL)
+	if latency != 0 {
+		t.Errorf("expected latency 0 on error, got %v", latency)
 	}
 }
