@@ -644,6 +644,88 @@ Response:
 - All mutations are idempotent where possible
 - Small, focused commits
 
+## Promotions
+
+Kikapu supports percentage, fixed-amount, and free shipping promotions with deterministic stacking rules.
+
+### Stacking Order
+
+When multiple promotions apply, they are applied in a specific order:
+
+1. **Percentage promotions first** (applied to subtotal)
+2. **Fixed-amount promotions second** (applied after percentage discounts)
+3. **Ties broken by ID** (lexicographic order when multiple promotions of the same type exist)
+
+This order ensures predictable, deterministic discount calculations.
+
+### Single-Code Rule
+
+- **At most one code-based promotion per order**
+- Automatic promotions (no code required) can stack without limit
+- If multiple code promotions are provided, the first valid one is applied and subsequent ones are rejected with reason `one_code_per_order`
+
+### Promotion Application
+
+Promotions are validated before application:
+- Must be within the active date range (`StartsAt <= now < EndsAt`)
+- Must have remaining usage (if `UsageLimit` is set)
+- Must meet minimum subtotal requirement (if `MinSubtotal` is set)
+- Can target specific variants via `AppliesTo` (empty = all variants)
+- Rejected promotions never partially apply
+
+### Example
+
+```go
+// 10% off + 50 KES fixed discount on a 1000 KES order
+promotions := []Promotion{
+    {ID: "p1", Kind: KindPercentage, Value: 1000}  // 1000 bps = 10%
+    {ID: "p2", Kind: KindFixed, Value: 5000}       // 5000 minor units = 50 KES
+}
+applied, rejected := Apply(lines, promotions, time.Now())
+// Result: 10% off 1000 = 100 KES, then 50 KES fixed = 150 KES total discount
+```
+
+## Tax Calculation
+
+Kikapu calculates VAT/sales tax with cent-level accuracy using round-half-even (banker's rounding).
+
+### Rounding Rule
+
+- Per-line tax amounts are rounded using **round-half-even** (banker's rounding)
+- After rounding, a **residual adjustment** is applied to ensure the sum of per-line tax equals the total exactly
+- The adjustment is applied to the line with the largest tax amount
+
+### Inclusive vs Exclusive Tax
+
+- **Exclusive**: Tax is added on top of the line total (`tax = subtotal × rate`)
+- **Inclusive**: Tax is extracted from the total (`tax = total × rate / (10000 + rate)`)
+
+Tax rates are expressed in **basis points**:
+- 1600 bps = 16%
+- 2000 bps = 20%
+
+### Example: 16% VAT on 999 KES
+
+```go
+// 999 KES at 16% VAT (exclusive)
+lines := []order.Line{
+    {UnitPrice: money.NewAmount(99900, "KES"), Quantity: 1}  // 999.00 KES
+}
+perLine, total := TaxFor(lines, 1600, false)
+// 99900 * 1600 / 10000 = 15984 (159.84 KES)
+// Round-half-even: 159.84 KES (already an integer in minor units)
+```
+
+### Example: 3-Line Order with Residual
+
+```
+Line 1: 33.33 KES × 16% = 5.3328 → rounded to 5.33
+Line 2: 33.33 KES × 16% = 5.3328 → rounded to 5.33
+Line 3: 33.34 KES × 16% = 5.3344 → rounded to 5.33
+Sum: 15.99, Expected total: 16.00 → Residual: 0.01 added to Line 3 (largest)
+Final: [5.33, 5.33, 5.34] = 16.00 ✓
+```
+
 ## License
 
 MIT
