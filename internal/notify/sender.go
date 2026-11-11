@@ -274,8 +274,8 @@ type providerMap struct {
 
 func NewProviderMap() *providerMap {
 	return &providerMap{
-		providers: make(map[string]Sender),
-		default:   "smtp",
+		providers:       make(map[string]Sender),
+		defaultProvider: "smtp",
 	}
 }
 
@@ -284,7 +284,7 @@ func (pm *providerMap) Send(ctx context.Context, m Message) error {
 		return ErrProviderNotConfigured
 	}
 	
-	providerName := pm.default
+	providerName := pm.defaultProvider
 	if m.Provider != "" {
 		providerName = m.Provider
 	}
