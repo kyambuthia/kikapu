@@ -10,25 +10,25 @@ import (
 )
 
 type Config struct {
-	EmailProvider    string
-	SMTPHost         string
-	SMTPPort         int
-	SMTPUsername     string
-	SMTPPassword     string
-	SMTPFrom         string
-	AfricaTalkingAPIKey string
+	EmailProvider         string
+	SMTPHost              string
+	SMTPPort              int
+	SMTPUsername          string
+	SMTPPassword          string
+	SMTPFrom              string
+	AfricaTalkingAPIKey   string
 	AfricaTalkingSenderID string
 	AfricaTalkingUsername string
-	WebhookURL      string
-	WebhookAuthToken string
+	WebhookURL            string
+	WebhookAuthToken      string
 }
 
 type Service struct {
-	config           Config
-	sender          Sender
-	tmpls            *Templates
-	log              Logger
-	normalizer       *normalizer
+	config     Config
+	sender     Sender
+	tmpls      *Templates
+	log        Logger
+	normalizer *normalizer
 }
 
 func NewService(config Config) *Service {
@@ -36,7 +36,7 @@ func NewService(config Config) *Service {
 	if err != nil {
 		log.Fatalf("failed to create sender: %v", err)
 	}
-	
+
 	return &Service{
 		config:     config,
 		sender:     sender,
@@ -72,12 +72,12 @@ func (s *Service) Email(ctx context.Context, to, template string, vars map[strin
 	if err != nil {
 		return fmt.Errorf("normalize email: %w", err)
 	}
-	
+
 	email, ok := s.sender.(*SMTP)
 	if !ok {
 		return fmt.Errorf("email sender not configured")
 	}
-	
+
 	if s.config.EmailProvider == "smtp" {
 		return email.Send(ctx, Message{
 			To:       to,
@@ -85,7 +85,7 @@ func (s *Service) Email(ctx context.Context, to, template string, vars map[strin
 			Vars:     vars,
 		})
 	}
-	
+
 	return fmt.Errorf("email provider not available")
 }
 
@@ -94,12 +94,12 @@ func (s *Service) SMS(ctx context.Context, to, template string, vars map[string]
 	if err != nil {
 		return fmt.Errorf("normalize phone: %w", err)
 	}
-	
+
 	sms, ok := s.sender.(*AfricaTalking)
 	if !ok {
 		return fmt.Errorf("SMS sender not configured")
 	}
-	
+
 	return sms.Send(ctx, Message{
 		To:       normalized,
 		Template: template,
@@ -116,12 +116,12 @@ func (s *Service) Consume(ctx context.Context, events <-chan events.Event) error
 			if !ok {
 				return nil
 			}
-			
+
 			if err := s.handleEvent(ctx, event); err != nil {
 				log.Printf("failed to handle event %s: %v", event.ID, err)
 				return fmt.Errorf("handle event %s: %w", event.ID, err)
 			}
-			
+
 			log.Printf("handled event: %s", event.Type)
 		}
 	}
@@ -151,80 +151,80 @@ func (s *Service) eventsChan() <-chan events.Event {
 func (s *Service) handleOrderPaid(ctx context.Context, event events.Event) error {
 	// Extract order data from event
 	// In production, you would query the database for order details
-	
+
 	// Prepare variables for template
 	vars := map[string]any{
-		"OrderID":   extractOrderID(event),
-		"Total":     "1000",
-		"Currency":  "KES",
+		"OrderID":    extractOrderID(event),
+		"Total":      "1000",
+		"Currency":   "KES",
 		"CapturedAt": event.OccurredAt.Format(time.RFC3339),
 		"Items": []map[string]any{
 			{"Product": "Wireless Mouse", "Quantity": 1, "Price": "2999"},
 		},
 	}
-	
+
 	// Send email notification
 	if err := s.Email(ctx, "customer@example.com", "order.paid", vars); err != nil {
 		log.Printf("failed to send email: %v", err)
 	}
-	
+
 	// Send SMS notification (if configured)
 	if err := s.SMS(ctx, "+254712345678", "order.paid", vars); err != nil {
 		log.Printf("failed to send SMS: %v", err)
 	}
-	
+
 	return nil
 }
 
 func (s *Service) handleOrderFulfilled(ctx context.Context, event events.Event) error {
 	// Extract order data from event
 	// In production, you would query the database for order details
-	
+
 	// Prepare variables for template
 	vars := map[string]any{
-		"OrderID":      extractOrderID(event),
-		"Status":       "shipped",
-		"Carrier":      "Courier",
-		"TrackingNumber": "TRK123456",
+		"OrderID":           extractOrderID(event),
+		"Status":            "shipped",
+		"Carrier":           "Courier",
+		"TrackingNumber":    "TRK123456",
 		"EstimatedDelivery": time.Now().AddDate(0, 0, 5).Format(time.RFC3339),
 	}
-	
+
 	// Send email notification
 	if err := s.Email(ctx, "customer@example.com", "order.fulfilled", vars); err != nil {
 		log.Printf("failed to send email: %v", err)
 	}
-	
+
 	// Send SMS notification (if configured)
 	if err := s.SMS(ctx, "+254712345678", "order.fulfilled", vars); err != nil {
 		log.Printf("failed to send SMS: %v", err)
 	}
-	
+
 	return nil
 }
 
 func (s *Service) handleOrderRefunded(ctx context.Context, event events.Event) error {
 	// Extract order data from event
 	// In production, you would query the database for order details
-	
+
 	// Prepare variables for template
 	vars := map[string]any{
-		"RefundID":  "REF123456",
-		"OrderID":   extractOrderID(event),
-		"Amount":    "500",
-		"Currency":  "KES",
+		"RefundID":    "REF123456",
+		"OrderID":     extractOrderID(event),
+		"Amount":      "500",
+		"Currency":    "KES",
 		"ProcessedAt": event.OccurredAt.Format(time.RFC3339),
 	}
-	
+
 	// Send email notification
 	if err := s.Email(ctx, "customer@example.com", "order.refunded", vars); err != nil {
 		log.Printf("failed to send email: %v", err)
 	}
-	
+
 	// Send SMS notification (if configured)
 	if err := s.SMS(ctx, "+254712345678", "order.refunded", vars); err != nil {
 		log.Printf("failed to send SMS: %v", err)
 	}
-	
+
 	return nil
 }
 
@@ -254,7 +254,7 @@ func createSender(config Config) (Sender, error) {
 			config.SMTPFrom,
 			true,
 		), nil
-		
+
 	case "africastalking":
 		return NewAfricaTalking(
 			config.AfricaTalkingUsername,
@@ -262,7 +262,7 @@ func createSender(config Config) (Sender, error) {
 			config.AfricaTalkingSenderID,
 			"https://api.africastalking.com/version1/messaging",
 		), nil
-		
+
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", config.EmailProvider)
 	}

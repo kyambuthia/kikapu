@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net"
 	"sync"
 	"testing"
 	"time"
@@ -50,51 +50,51 @@ func TestMiddleware429(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-	t.Run(tt.name, func(t *testing.T) {
-		limiter := NewLimiter(tt.rateLimit * 2) // Larger size to prevent eviction
-		nextCalled := false
-		nextToUse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			nextCalled = true
-			http.Error(w, "ok", http.StatusOK)
+		t.Run(tt.name, func(t *testing.T) {
+			limiter := NewLimiter(tt.rateLimit * 2) // Larger size to prevent eviction
+			nextCalled := false
+			nextToUse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				nextCalled = true
+				http.Error(w, "ok", http.StatusOK)
+			})
+
+			middleman := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reqID := RequestID(r)
+				if reqID == "" {
+					t.Error("request ID should be present")
+				}
+				w.Header().Set("X-Request-ID", reqID)
+				nextToUse.ServeHTTP(w, r)
+			})
+
+			middlewareThenMiddleman := LimiterAndTimeout(limiter, time.Second, middleman)
+
+			for i := 0; i < tt.requestCount; i++ {
+				req := httptest.NewRequest("GET", "/", nil)
+				w := httptest.NewRecorder()
+				middlewareThenMiddleman.ServeHTTP(w, req)
+
+				resp := w.Result()
+				if i == tt.requestCount-1 && !nextCalled {
+					t.Errorf("next handler was not called")
+				}
+				if i == tt.requestCount-1 {
+					if resp.StatusCode != http.StatusOK && tt.expect2xx {
+						t.Errorf("request %d should be allowed", i)
+					}
+					if resp.StatusCode != http.StatusTooManyRequests && !tt.expect2xx {
+						t.Errorf("request %d should be 429", i)
+					}
+					retryAfter := w.Header().Get("Retry-After")
+					if resp.StatusCode == http.StatusTooManyRequests && tt.expectRetryAfter && retryAfter == "" {
+						t.Errorf("request %d should have Retry-After header", i)
+					}
+				}
+				if i == tt.requestCount-1 {
+					resp.Body.Close()
+				}
+			}
 		})
-
-		middleman := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			reqID := RequestID(r)
-			if reqID == "" {
-				t.Error("request ID should be present")
-			}
-			w.Header().Set("X-Request-ID", reqID)
-			nextToUse.ServeHTTP(w, r)
-		})
-
-		middlewareThenMiddleman := LimiterAndTimeout(limiter, time.Second, middleman)
-
-		for i := 0; i < tt.requestCount; i++ {
-			req := httptest.NewRequest("GET", "/", nil)
-			w := httptest.NewRecorder()
-			middlewareThenMiddleman.ServeHTTP(w, req)
-
-			resp := w.Result()
-			if i == tt.requestCount-1 && !nextCalled {
-				t.Errorf("next handler was not called")
-			}
-			if i == tt.requestCount-1 {
-				if resp.StatusCode != http.StatusOK && tt.expect2xx {
-					t.Errorf("request %d should be allowed", i)
-				}
-				if resp.StatusCode != http.StatusTooManyRequests && !tt.expect2xx {
-					t.Errorf("request %d should be 429", i)
-				}
-				retryAfter := w.Header().Get("Retry-After")
-				if resp.StatusCode == http.StatusTooManyRequests && tt.expectRetryAfter && retryAfter == "" {
-					t.Errorf("request %d should have Retry-After header", i)
-				}
-			}
-			if i == tt.requestCount-1 {
-				resp.Body.Close()
-			}
-		}
-	})
 	}
 }
 

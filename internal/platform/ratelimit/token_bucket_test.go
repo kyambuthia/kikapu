@@ -22,7 +22,7 @@ func TestBucketAllow(t *testing.T) {
 	tests := []struct {
 		name           string
 		initialTokens  uint64
-	 refillDuration time.Duration
+		refillDuration time.Duration
 		requestCount   int
 	}{
 		{

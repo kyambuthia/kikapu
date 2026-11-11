@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -195,27 +195,27 @@ func main() {
 	}
 
 	cartHandler := routes.NewCartHandler(cartStore, checkoutSvc)
-	
+
 	mux := http.NewServeMux()
-	
+
 	catalogHandler.RegisterRoutes(mux)
 	cartHandler.RegisterRoutes(mux)
-	
+
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	
+
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	
+
 	mux.HandleFunc("/v1/version", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{
 			"version": version,
 			"commit":  commit,
 		})
 	})
-	
+
 	handler := obs.NewMiddleware(obs.MiddlewareOptions{
 		Logger:         logger,
 		RequestTracker: requestTracker,
