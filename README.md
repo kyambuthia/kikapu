@@ -49,9 +49,30 @@ Kikapu is designed as a lightweight, single-binary commerce engine that can run 
 make build
 ```
 
+### Database Setup
+
+Kikapu requires PostgreSQL for persistence. Set up your database:
+
+1. Create a PostgreSQL database:
+```bash
+createdb kikapu
+```
+
+2. Run migrations:
+```bash
+export DATABASE_URL="postgres://user:password@localhost:5432/kikapu?sslmode=disable"
+./kikapu --mode migrate
+```
+
+Or specify migrations directory:
+```bash
+./kikapu --mode migrate --migrations ./migrations
+```
+
 ### Run
 
 ```bash
+export DATABASE_URL="postgres://user:password@localhost:5432/kikapu?sslmode=disable"
 ./kikapu --addr :8080 --mode api
 ```
 
@@ -67,16 +88,26 @@ make run
 make test
 ```
 
+For integration tests with PostgreSQL:
+
+```bash
+export TEST_DATABASE_URL="postgres://user:password@localhost:5432/kikapu_test?sslmode=disable"
+make test
+```
+
+Integration tests skip cleanly when `TEST_DATABASE_URL` is not set.
+
 ## Configuration
 
 Configuration is environment-based:
 
  | Variable | Default | Description |
 |----------|---------|-------------|
- | `KIKAPU_ADDR` | `:8080` | Address to listen on |
- | `KIKAPU_MODE` | `api` | Operation mode (api\|worker) |
- | `KIKAPU_LOG_LEVEL` | `info` | Log level (debug\|info\|warn\|error) |
- | `PAYMENT_PROVIDER` | `fake` | Payment provider (fake\|paystack\|mpesa) |
+| `KIKAPU_ADDR` | `:8080` | Address to listen on |
+| `KIKAPU_MODE` | `api` | Operation mode (api\|worker\|migrate) |
+| `KIKAPU_LOG_LEVEL` | `info` | Log level (debug\|info\|warn\|error) |
+| `DATABASE_URL` | `` | PostgreSQL connection string (required for api/migrate modes) |
+| `PAYMENT_PROVIDER` | `fake` | Payment provider (fake\|paystack\|mpesa) |
  | `PAYSTACK_SECRET_KEY` | `` | Paystack secret key (required if PAYMENT_PROVIDER=paystack) |
  | `PAYSTACK_BASE_URL` | `` | Paystack API base URL (optional, defaults to https://api.paystack.co) |
  | `MPESA_CONSUMER_KEY` | `` | M-Pesa Daraja consumer key (required if PAYMENT_PROVIDER=mpesa) |
@@ -86,6 +117,58 @@ Configuration is environment-based:
  | `MPESA_CALLBACK_URL` | `` | M-Pesa callback URL (required if PAYMENT_PROVIDER=mpesa) |
  | `MPESA_BASE_URL` | `` | M-Pesa API base URL (optional, defaults to https://sandbox.safaricom.co.ke) |
  | `MPESA_ALLOWED_CIDRS` | `` | Comma-separated list of allowed CIDRs for M-Pesa callbacks (required for production) |
+
+## Database Schema
+
+Kikapu uses PostgreSQL with the following schema:
+
+### Tables
+
+- **products**: Product catalog (UUID primary keys, slug unique)
+- **variants**: Product variants with price in minor units
+- **product_channels**: Link table for multi-channel support
+- **orders**: Order headers with region-scoped order numbers
+- **order_lines**: Order line items
+- **refunds**: Refund records
+
+### Constraints
+
+- **Money**: All monetary values stored as `BIGINT` (minor units) with `CHECK >= 0` where applicable
+- **Order Numbers**: Unique per region with `UNIQUE (region_id, number)`
+- **Timestamps**: `created_at` and `updated_at` with `DEFAULT now()`
+- **No Cross-Module FKs**: Tables reference only within their module
+
+### Migrations
+
+Migrations are forward-only SQL files in `migrations/`. Each migration:
+
+- Has a version prefix (e.g., `0001_init.sql`)
+- Includes a comment header explaining the change
+- Is applied idempotently with advisory locking
+
+To create a new migration:
+
+```bash
+# Create migrations if directory doesn't exist
+mkdir -p migrations
+
+# Add your SQL migration file
+cat > migrations/0002_add_new_table.sql <<EOF
+-- Add new table for feature X
+-- Why: Support feature X requirements
+-- Reversible: no
+
+CREATE TABLE new_table (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO schema_migrations (version) VALUES ('0002');
+EOF
+
+# Run migration
+./kikapu --mode migrate
+```
 
 ## API Endpoints
 

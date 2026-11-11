@@ -622,11 +622,11 @@ func TestNoSecretMaterialInErrorResponse(t *testing.T) {
 	middleware.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
-	
+
 	if strings.Contains(body, keyStr) {
 		t.Errorf("Full key should not appear in error response, found in: %s", body)
 	}
-	
+
 	if strings.Contains(body, keyStr[4:]) {
 		t.Errorf("Key material after prefix should not appear in error response, found in: %s", body)
 	}
@@ -641,11 +641,11 @@ func TestKeyHashStorage(t *testing.T) {
 		storedKey = k
 		break
 	}
-	
+
 	if bytes.Equal(storedKey.Hash, []byte(keyStr)) {
 		t.Error("Hash should not equal the key string")
 	}
-	
+
 	if len(storedKey.Hash) != 32 {
 		t.Errorf("Hash should be 32 bytes (SHA-256), got %d", len(storedKey.Hash))
 	}

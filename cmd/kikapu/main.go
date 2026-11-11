@@ -15,6 +15,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/inventory"
+	"github.com/kyambuthia/kikapu/internal/migrate"
 	"github.com/kyambuthia/kikapu/internal/outbox"
 	"github.com/kyambuthia/kikapu/internal/payment"
 	"github.com/kyambuthia/kikapu/internal/payment/mpesa"
@@ -33,7 +34,8 @@ var (
 
 func main() {
 	addr := flag.String("addr", ":8080", "address to listen on")
-	mode := flag.String("mode", "api", "operation mode (api|worker)")
+	mode := flag.String("mode", "api", "operation mode (api|worker|migrate)")
+	migrationsDir := flag.String("migrations", "migrations", "migrations directory")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -58,6 +60,24 @@ func main() {
 		level = slog.LevelError
 	}
 	logger := obs.NewLogger(level)
+
+	if cfg.Mode == "migrate" {
+		databaseURL := os.Getenv("DATABASE_URL")
+		if databaseURL == "" {
+			fmt.Fprintln(os.Stderr, "DATABASE_URL environment variable is required for migration")
+			os.Exit(1)
+		}
+
+		logger.Info("running migrations", "migrations_dir", *migrationsDir)
+
+		if err := migrate.Run(databaseURL, *migrationsDir); err != nil {
+			logger.Error("migration failed", "error", err)
+			os.Exit(1)
+		}
+
+		logger.Info("migrations completed successfully")
+		return
+	}
 
 	if cfg.Mode != "api" {
 		logger.Info("starting in worker mode", "mode", cfg.Mode)
