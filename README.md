@@ -71,12 +71,19 @@ Configuration is environment-based:
 
  | Variable | Default | Description |
 |----------|---------|-------------|
-| `KIKAPU_ADDR` | `:8080` | Address to listen on |
-| `KIKAPU_MODE` | `api` | Operation mode (api\|worker) |
-| `KIKAPU_LOG_LEVEL` | `info` | Log level (debug\|info\|warn\|error) |
-| `PAYMENT_PROVIDER` | `fake` | Payment provider (fake\|paystack) |
-| `PAYSTACK_SECRET_KEY` | `` | Paystack secret key (required if PAYMENT_PROVIDER=paystack) |
-| `PAYSTACK_BASE_URL` | `` | Paystack API base URL (optional, defaults to https://api.paystack.co) |
+ | `KIKAPU_ADDR` | `:8080` | Address to listen on |
+ | `KIKAPU_MODE` | `api` | Operation mode (api\|worker) |
+ | `KIKAPU_LOG_LEVEL` | `info` | Log level (debug\|info\|warn\|error) |
+ | `PAYMENT_PROVIDER` | `fake` | Payment provider (fake\|paystack\|mpesa) |
+ | `PAYSTACK_SECRET_KEY` | `` | Paystack secret key (required if PAYMENT_PROVIDER=paystack) |
+ | `PAYSTACK_BASE_URL` | `` | Paystack API base URL (optional, defaults to https://api.paystack.co) |
+ | `MPESA_CONSUMER_KEY` | `` | M-Pesa Daraja consumer key (required if PAYMENT_PROVIDER=mpesa) |
+ | `MPESA_CONSUMER_SECRET` | `` | M-Pesa Daraja consumer secret (required if PAYMENT_PROVIDER=mpesa) |
+ | `MPESA_SHORT_CODE` | `` | M-Pesa business short code (required if PAYMENT_PROVIDER=mpesa) |
+ | `MPESA_PASSKEY` | `` | M-Pesa passkey (required if PAYMENT_PROVIDER=mpesa) |
+ | `MPESA_CALLBACK_URL` | `` | M-Pesa callback URL (required if PAYMENT_PROVIDER=mpesa) |
+ | `MPESA_BASE_URL` | `` | M-Pesa API base URL (optional, defaults to https://sandbox.safaricom.co.ke) |
+ | `MPESA_ALLOWED_CIDRS` | `` | Comma-separated list of allowed CIDRs for M-Pesa callbacks (required for production) |
 
 ## API Endpoints
 
@@ -309,52 +316,132 @@ Response (400 Bad Request):
  ```
  
  ## Payment Providers
+  
+ Kikapu supports multiple payment providers. Currently implemented:
  
-Kikapu supports multiple payment providers. Currently implemented:
+ ### Fake Provider (Default)
  
-### Fake Provider (Default)
+ The fake provider is used by default for development and testing. It simulates successful payments without making real API calls.
  
-The fake provider is used by default for development and testing. It simulates successful payments without making real API calls.
+ ### Paystack Provider
  
-### Paystack Provider
+ Paystack is a payment gateway for African businesses. To use Paystack:
  
-Paystack is a payment gateway for African businesses. To use Paystack:
+ 1. Set environment variables:
+  ```bash
+  export PAYMENT_PROVIDER=paystack
+  export PAYSTACK_SECRET_KEY=sk_test_your_secret_key
+  ```
+  
+ 2. Configure webhook in your Paystack dashboard:
+  - URL: `https://your-domain.com/v1/webhooks/paystack`
+  - Events: `charge.success`
+  
+ #### Webhook Contract
+  
+ The Paystack webhook endpoint (`POST /v1/webhooks/paystack`):
+  
+ - **Signature Verification**: Validates `X-Paystack-Signature` header using HMAC-SHA512
+ - **Idempotency**: Guarantees single state transition per event (by event ID and transaction reference)
+ - **Event Types**: 
+  - `charge.success` - Processed with state transition
+  - Unknown events - Returns 200 OK but no state change (logged)
+  
+ #### Paystack Status Mapping
+  
+ | Paystack Status | Kikapu State |
+ |----------------|--------------|
+ | `success` | `captured` |
+ | `failed` | `failed` |
+ | `abandoned` | `pending` |
+  
+ #### Webhook Response Codes
+  
+ | Status | Condition |
+ |--------|-----------|
+ | 200 OK | Valid signature, event processed or ignored |
+ | 400 Bad Request | Invalid payload |
+ | 401 Unauthorized | Missing or invalid signature |
  
-1. Set environment variables:
- ```bash
- export PAYMENT_PROVIDER=paystack
- export PAYSTACK_SECRET_KEY=sk_test_your_secret_key
+ ### M-Pesa Provider
+ 
+ M-Pesa (Daraja API) is Safaricom's mobile payment platform for Kenya. To use M-Pesa:
+ 
+ 1. Set environment variables:
+  ```bash
+  export PAYMENT_PROVIDER=mpesa
+  export MPESA_CONSUMER_KEY=your_consumer_key
+  export MPESA_CONSUMER_SECRET=your_consumer_secret
+  export MPESA_SHORT_CODE=174379
+  export MPESA_PASSKEY=your_passkey
+  export MPESA_CALLBACK_URL=https://your-domain.com/v1/webhooks/mpesa
+  export MPESA_ALLOWED_CIDRs=196.216.200.0/24
+  ```
+ 
+ **Important**: M-Pesa amounts are in **integer KES** (no cents). For example, 100 KES is represented as `100`, not `10000`.
+ 
+ #### STK Push Flow
+ 
+ 1. Customer initiates payment
+ 2. `Charge()` sends STK push to customer's phone
+ 3. Customer enters M-Pesa PIN
+ 4. Callback received with payment result
+ 5. Use `Verify()` to check status if callback not received
+ 
+ #### Callback Contract
+ 
+ The M-Pesa callback endpoint receives `POST` requests with the following payload:
+ 
+ ```json
+ {
+   "Body": {
+     "stkCallback": {
+       "MerchantRequestID": "12345",
+       "CheckoutRequestID": "ws_CO_123456",
+       "ResultCode": 0,
+       "ResultDesc": "Success",
+       "CallbackMetadata": {
+         "Item": [
+           {"Name": "Amount", "Value": 100},
+           {"Name": "MpesaReceiptNumber", "Value": "QEQ123"},
+           {"Name": "PhoneNumber", "Value": 254712345678},
+           {"Name": "TransactionDate", "Value": 20240115103000}
+         ]
+       }
+     }
+   }
+ }
  ```
  
-2. Configure webhook in your Paystack dashboard:
- - URL: `https://your-domain.com/v1/webhooks/paystack`
- - Events: `charge.success`
+ - **Idempotency**: Callbacks are idempotent by `CheckoutRequestID` + `ResultCode`
+ - **Duplicate callbacks**: No-op, returns 200 OK
+ - **Missing fields**: Returns 400 Bad Request with error envelope
  
-#### Webhook Contract
+ #### IP Allowlist (Critical Security)
  
-The Paystack webhook endpoint (`POST /v1/webhooks/paystack`):
+ **M-Pesa callbacks are NOT signed by Safaricom.** The only security control is IP allowlisting:
  
-- **Signature Verification**: Validates `X-Paystack-Signature` header using HMAC-SHA512
-- **Idempotency**: Guarantees single state transition per event (by event ID and transaction reference)
-- **Event Types**: 
- - `charge.success` - Processed with state transition
- - Unknown events - Returns 200 OK but no state change (logged)
+ - In **production mode**, callbacks will be rejected if `MPESA_ALLOWED_CIDRS` is not configured
+ - In **development mode**, callbacks are accepted without IP validation (but logging occurs)
+ - Configure Safaricom's IP ranges in `MPESA_ALLOWED_CIDRS` (comma-separated CIDRs)
+ - Example: `MPESA_ALLOWED_CIDRS=196.216.200.0/24,196.216.201.0/24`
  
-#### Paystack Status Mapping
+ #### M-Pesa Result Code Mapping
  
-| Paystack Status | Kikapu State |
-|----------------|--------------|
-| `success` | `captured` |
-| `failed` | `failed` |
-| `abandoned` | `pending` |
+ | Result Code | Meaning | Kikapu State |
+ |------------|---------|--------------|
+ | 0 | Success | `captured` |
+ | 1032 | Cancelled by user | `failed` |
+ | 1037 | Timeout | `failed` |
+ | Other | Various errors | `failed` |
  
-#### Webhook Response Codes
+ #### Phone Number Format
  
-| Status | Condition |
-|--------|-----------|
-| 200 OK | Valid signature, event processed or ignored |
-| 400 Bad Request | Invalid payload |
-| 401 Unauthorized | Missing or invalid signature |
+ Phone numbers should be in international format: `2547XXXXXXXX`
+ 
+ Automatic normalization:
+ - `0712345678` → `254712345678`
+ - `+254712345678` → `254712345678`
 
  ## Development
 
