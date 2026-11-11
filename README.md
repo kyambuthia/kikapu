@@ -69,11 +69,14 @@ make test
 
 Configuration is environment-based:
 
-| Variable | Default | Description |
+ | Variable | Default | Description |
 |----------|---------|-------------|
 | `KIKAPU_ADDR` | `:8080` | Address to listen on |
 | `KIKAPU_MODE` | `api` | Operation mode (api\|worker) |
 | `KIKAPU_LOG_LEVEL` | `info` | Log level (debug\|info\|warn\|error) |
+| `PAYMENT_PROVIDER` | `fake` | Payment provider (fake\|paystack) |
+| `PAYSTACK_SECRET_KEY` | `` | Paystack secret key (required if PAYMENT_PROVIDER=paystack) |
+| `PAYSTACK_BASE_URL` | `` | Paystack API base URL (optional, defaults to https://api.paystack.co) |
 
 ## API Endpoints
 
@@ -90,7 +93,8 @@ Configuration is environment-based:
 | POST | `/v1/carts/{id}/items` | Add an item to cart |
 | PATCH | `/v1/carts/{id}/items/{variantID}` | Update item quantity |
 | DELETE | `/v1/carts/{id}/items/{variantID}` | Remove item from cart |
-| POST | `/v1/checkout` | Place an order (requires Idempotency-Key header) |
+ | POST | `/v1/checkout` | Place an order (requires Idempotency-Key header) |
+| POST | `/v1/webhooks/paystack` | Paystack webhook endpoint |
 
 ## Products API Examples
 
@@ -301,8 +305,56 @@ Response (400 Bad Request):
     "code": "empty_cart",
     "message": "cart is empty"
   }
-}
-```
+ }
+ ```
+ 
+ ## Payment Providers
+ 
+Kikapu supports multiple payment providers. Currently implemented:
+ 
+### Fake Provider (Default)
+ 
+The fake provider is used by default for development and testing. It simulates successful payments without making real API calls.
+ 
+### Paystack Provider
+ 
+Paystack is a payment gateway for African businesses. To use Paystack:
+ 
+1. Set environment variables:
+ ```bash
+ export PAYMENT_PROVIDER=paystack
+ export PAYSTACK_SECRET_KEY=sk_test_your_secret_key
+ ```
+ 
+2. Configure webhook in your Paystack dashboard:
+ - URL: `https://your-domain.com/v1/webhooks/paystack`
+ - Events: `charge.success`
+ 
+#### Webhook Contract
+ 
+The Paystack webhook endpoint (`POST /v1/webhooks/paystack`):
+ 
+- **Signature Verification**: Validates `X-Paystack-Signature` header using HMAC-SHA512
+- **Idempotency**: Guarantees single state transition per event (by event ID and transaction reference)
+- **Event Types**: 
+ - `charge.success` - Processed with state transition
+ - Unknown events - Returns 200 OK but no state change (logged)
+ 
+#### Paystack Status Mapping
+ 
+| Paystack Status | Kikapu State |
+|----------------|--------------|
+| `success` | `captured` |
+| `failed` | `failed` |
+| `abandoned` | `pending` |
+ 
+#### Webhook Response Codes
+ 
+| Status | Condition |
+|--------|-----------|
+| 200 OK | Valid signature, event processed or ignored |
+| 400 Bad Request | Invalid payload |
+| 401 Unauthorized | Missing or invalid signature |
 
  ## Development
 
