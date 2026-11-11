@@ -1,6 +1,7 @@
 package payment
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -70,6 +71,10 @@ type Payment struct {
 type Provider interface {
 	Charge(req ChargeRequest) (ChargeResult, error)
 	GetPayment(id string) (*Payment, error)
+}
+
+type Verifier interface {
+	Verify(ctx context.Context, reference string) (ChargeResult, error)
 }
 
 type FailureMode string
