@@ -100,9 +100,7 @@ func TestMiddleware429(t *testing.T) {
 
 func TestMiddlewareRateLimitCheckout(t *testing.T) {
 	limiter := NewLimiter(200)
-	nextCalled := false
 	nextToUse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		nextCalled = true
 		http.Error(w, "ok", http.StatusOK)
 	})
 
