@@ -21,7 +21,7 @@ var (
 	ErrMissingSignature   = errors.New("missing signature")
 	ErrInvalidSignature   = errors.New("invalid signature")
 	ErrStaleTimestamp     = errors.New("stale timestamp")
-	ErrMalformedSignature = errors.New("malformed signature")
+	ErrMalformedSignature = errors.New("malformed signature header")
 )
 
 type Handler struct {
@@ -101,7 +101,7 @@ func Sign(secret string, ts time.Time, body []byte) string {
 func ParseSignatureHeader(header string) (time.Time, string, error) {
 	parts := strings.Split(header, ",")
 	if len(parts) < 2 {
-		return time.Time{}, "", fmt.Errorf("%w: malformed header - need 't=' and 'v1=' components", ErrMalformedSignature)
+		return time.Time{}, "", ErrMalformedSignature
 	}
 
 	var timestamp int64
@@ -110,14 +110,14 @@ func ParseSignatureHeader(header string) (time.Time, string, error) {
 	for _, part := range parts {
 		kv := strings.SplitN(part, "=", 2)
 		if len(kv) != 2 {
-			return time.Time{}, "", fmt.Errorf("%w: malformed header '%s'", ErrMalformedSignature, part)
+			return time.Time{}, "", ErrMalformedSignature
 		}
 
 		switch kv[0] {
 		case "t":
 			parsed, err := strconv.ParseInt(kv[1], 10, 64)
 			if err != nil {
-				return time.Time{}, "", fmt.Errorf("%w: invalid timestamp '%s'", ErrInvalidSignature, kv[1])
+				return time.Time{}, "", ErrMalformedSignature
 			}
 			timestamp = parsed
 		case "v1":
@@ -126,7 +126,7 @@ func ParseSignatureHeader(header string) (time.Time, string, error) {
 	}
 
 	if timestamp == 0 || signature == "" {
-		return time.Time{}, "", fmt.Errorf("%w: missing timestamp or signature in header", ErrMissingSignature)
+		return time.Time{}, "", ErrMissingSignature
 	}
 
 	return time.Unix(timestamp, 0), signature, nil
