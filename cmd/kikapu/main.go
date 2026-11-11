@@ -83,7 +83,7 @@ func main() {
 	catalogHandler := routes.NewCatalogHandler(repo)
 
 	cartStore := cart.NewInMemoryStore()
-	inventorySvc := inventory.NewService(inventory.RealClock{}, 5*time.Minute)
+	inventoryStore := inventory.NewMemoryStore(nil)
 
 	var paymentProvider payment.Provider
 	switch cfg.PaymentProvider {
@@ -116,7 +116,7 @@ func main() {
 	}
 
 	idempotencyStore := checkout.NewIdempotencyStore()
-	checkoutSvc := checkout.NewService(cartStore, inventorySvc, paymentProvider, idempotencyStore)
+	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore)
 
 	cartHandler := routes.NewCartHandler(cartStore, checkoutSvc)
 

@@ -523,6 +523,46 @@ CI runs automatically on push:
 - `go build ./...` must succeed
 - `go test ./...` must pass
 
+## Inventory & Reservations
+
+Kikapu uses a reservation-based inventory system to prevent overselling under concurrent access.
+
+### Reservation Lifecycle
+
+Every reservation follows one of three paths:
+
+```
+reserve → commit   (sale completed, stock removed)
+reserve → release  (customer cancelled, stock returned)
+reserve → expire   (timeout, stock returned automatically)
+```
+
+### Checkout Flow
+
+The checkout process enforces strict ordering to guarantee no overselling:
+
+1. **Reserve inventory** before charging payment
+2. **Commit** reservations on successful payment capture
+3. **Release** reservations on payment failure or cancellation
+4. **Expire** reservations via background process
+
+This contract ensures inventory is never oversold, even under high concurrency (proven by the 100-goroutine race test).
+
+### Stock Locations
+
+Inventory is tracked per variant per location:
+
+```json
+{
+  "variant_id": "var001",
+  "location_id": "warehouse-ke",
+  "on_hand": 100,
+  "reserved": 10
+}
+```
+
+The `Available()` calculation (`on_hand - reserved`) gives the sellable quantity.
+
 ## Architecture Invariants
 
 - Single binary deployment
