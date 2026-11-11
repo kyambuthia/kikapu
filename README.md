@@ -194,6 +194,14 @@ EOF
  | POST | `/v1/admin/keys` | Create API key (admin only) |
  | GET | `/v1/admin/keys` | List API keys (admin only) |
  | DELETE | `/v1/admin/keys/{id}` | Revoke API key (admin only) |
+ | GET | `/v1/admin/products` | List products (admin only) |
+ | POST | `/v1/admin/products` | Create product (admin only) |
+ | GET | `/v1/admin/products/{id}` | Get product (admin only) |
+ | PATCH | `/v1/admin/products/{id}` | Update product (admin only) |
+ | DELETE | `/v1/admin/products/{id}` | Delete product (admin only) |
+ | PUT | `/v1/admin/products/{id}/stock` | Update stock level (admin only) |
+ | GET | `/v1/admin/orders` | List orders (admin only) |
+ | GET | `/v1/admin/orders/{id}` | Get order (admin only) |
 
 ## API Key Authentication
 
@@ -212,10 +220,55 @@ API keys are scoped to specific permissions:
 | `products:read` | Read product catalog |
 | `orders:read` | Read order information |
 | `orders:write` | Create and modify orders |
-| `stock:read` | Read inventory levels |
-| `stock:write` | Modify inventory |
-| `admin:read` | Read admin data |
-| `admin:write` | Perform admin operations |
+ | `stock:read` | Read inventory levels |
+ | `stock:write` | Modify inventory |
+ | `admin:read` | Read admin data |
+ | `admin:write` | Perform admin operations |
+
+### Creating API Keys
+
+Create a new API key:
+
+```bash
+curl -X POST http://localhost:8080/v1/admin/keys \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{
+    "name": "Integration Key",
+    "scopes": ["products:read", "orders:write"]
+  }'
+```
+
+Response:
+```json
+{
+  "id": "key_abc123...",
+  "name": "Integration Key",
+  "prefix": "kik_abc1",
+  "key": "kik_abc123def456...",
+  "scopes": ["products:read", "orders:write"]
+}
+```
+
+**Important**: The `key` field is shown **only once** when created. Store it securely; only the SHA-256 hash is stored.
+
+## Admin API
+
+The admin API provides a storefront-safe interface for managing products, variants, prices, and stock. Unlike the public storefront API, the admin API exposes internal IDs, stock counts by location, and enables mutation operations.
+
+### Admin Scopes
+
+Admin endpoints require specific scopes:
+
+| Endpoint | Required Scope |
+|----------|---------------|
+| GET /v1/admin/products | `admin:read` |
+| POST /v1/admin/products | `admin:write` |
+| PATCH /v1/admin/products/{id} | `admin:write` |
+| DELETE /v1/admin/products/{id} | `admin:write` |
+| PUT /v1/admin/products/{id}/stock | `admin:write` |
+| GET /v1/admin/orders | `admin:read` |
+| GET /v1/admin/orders/{id} | `admin:read` |
 
 ### Creating API Keys
 
@@ -279,6 +332,242 @@ curl -X DELETE http://localhost:8080/v1/admin/keys/key_abc123... \
 - Logs show only the key prefix (first 8 characters), never the full key
 - Constant-time comparison prevents timing attacks
 - `RevokedAt` takes precedence over `ExpiresAt`
+
+## Admin API Examples
+
+### Create a Product
+
+Create a new product with variants. Requires `Idempotency-Key` header for exactly-once semantics:
+
+```bash
+curl -X POST http://localhost:8080/v1/admin/products \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -H "Idempotency-Key: unique-request-key-12345" \
+  -d '{
+    "slug": "wireless-keyboard",
+    "name": "Wireless Keyboard",
+    "status": "draft",
+    "variants": [
+      {
+        "sku": "WK-BLK-US",
+        "price": 7999,
+        "currency": "USD"
+      },
+      {
+        "sku": "WK-WHT-US",
+        "price": 7999,
+        "currency": "USD"
+      }
+    ]
+  }'
+```
+
+Response (201 Created):
+```json
+{
+  "id": "prod_abc123...",
+  "slug": "wireless-keyboard",
+  "name": "Wireless Keyboard",
+  "status": "draft",
+  "variants": [
+    {
+      "id": "var_001",
+      "product_id": "prod_abc123...",
+      "sku": "WK-BLK-US",
+      "price": {"Value": 7999, "Currency": "USD"},
+      "created_at": "2024-01-15T10:30:00Z",
+      "updated_at": "2024-01-15T10:30:00Z"
+    },
+    {
+      "id": "var_002",
+      "product_id": "prod_abc123...",
+      "sku": "WK-WHT-US",
+      "price": {"Value": 7999, "Currency": "USD"},
+      "created_at": "2024-01-15T10:30:00Z",
+      "updated_at": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-15T10:30:00Z"
+}
+```
+
+#### Idempotency Behavior
+
+- Same `Idempotency-Key` + same request → same response (replay returns the original product)
+- Concurrent requests with same key → guaranteed single product creation
+- Idempotency prevents duplicate products even under concurrent access
+
+### Validation Errors
+
+Invalid requests return a 400 with field-level errors:
+
+```json
+{
+  "error": {
+    "code": "validation_error",
+    "message": "validation failed",
+    "fields": {
+      "slug": "invalid slug",
+      "variants[0].price": "price cannot be negative"
+    }
+  }
+}
+```
+
+Common validation errors:
+
+| Field | Error | Description |
+|-------|-------|-------------|
+| `slug` | `invalid slug` | Must be lowercase alphanumeric with hyphens, 1-80 chars |
+| `name` | `name cannot be empty` | Required field |
+| `status` | `status must be draft or published` | Only `draft` or `published` allowed on create |
+| `variants[i].sku` | `SKU cannot be empty` | Required field |
+| `variants[i].price` | `price cannot be negative` | Must be >= 0 |
+| `variants[i].currency` | `currency must be a valid ISO-4217 code` | Must be 3 uppercase letters |
+| `variants[i].sku` | `duplicate SKU` | SKU already exists in product |
+
+### Update a Product
+
+Update product details and variants:
+
+```bash
+curl -X PATCH http://localhost:8080/v1/admin/products/prod_abc123 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{
+    "slug": "wireless-keyboard-pro",
+    "name": "Wireless Keyboard Pro",
+    "status": "published",
+    "variants": [
+      {
+        "sku": "WK-BLK-US",
+        "price": 8999,
+        "currency": "USD"
+      }
+    ]
+  }'
+```
+
+**Note**: Updating variants replaces all variants. Include all variants you want to keep.
+
+### Delete a Product (Soft Delete)
+
+Deleting a product sets its status to `archived`. It will no longer appear in storefront listings but remains in the database for order history.
+
+```bash
+curl -X DELETE http://localhost:8080/v1/admin/products/prod_abc123 \
+  -H "Authorization: Bearer kik_admin_key"
+```
+
+#### Delete Constraints
+
+- **409 Conflict**: Cannot delete a product with existing orders. Returns:
+  ```json
+  {
+    "error": {
+      "code": "product_in_use",
+      "message": "cannot delete product with existing orders"
+    }
+  }
+  ```
+
+### Update Stock Levels
+
+Set stock level for a variant at a specific location:
+
+```bash
+curl -X PUT http://localhost:8080/v1/admin/products/var_001/stock \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{
+    "location_id": "warehouse-us-east",
+    "on_hand": 150
+  }'
+```
+
+Response:
+```json
+{
+  "variant_id": "var_001",
+  "location_id": "warehouse-us-east",
+  "on_hand": 150,
+  "reserved": 10
+}
+```
+
+#### Stock Validation
+
+- **Negative `on_hand`**: Returns 400 validation error
+- **Insufficient stock**: If `on_hand` < `reserved`, returns 400:
+  ```json
+  {
+    "error": {
+      "code": "insufficient_stock",
+      "message": "on_hand (50) cannot be less than reserved (100)"
+    }
+  }
+  ```
+
+The `Available()` calculation (`on_hand - reserved`) gives the sellable quantity visible to the storefront.
+
+### List Products (Admin)
+
+List products with pagination and filtering:
+
+```bash
+curl -X GET "http://localhost:8080/v1/admin/products?status=published&limit=20" \
+  -H "Authorization: Bearer kik_admin_key"
+```
+
+Query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `status` | string | Filter by status: `draft`, `published`, or `archived` |
+| `limit` | integer | Max results (1-100, default: 20) |
+| `cursor` | string | Pagination cursor from previous response |
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "prod_abc123",
+      "slug": "wireless-keyboard",
+      "name": "Wireless Keyboard",
+      "status": "published",
+      "variants": [...]
+    }
+  ],
+  "next_cursor": "eyJpZCI6InByb2RfYWJjMTIzIn0="
+}
+```
+
+### Admin Order Endpoints
+
+List and retrieve orders for admin purposes:
+
+```bash
+# List orders with filters
+curl -X GET "http://localhost:8080/v1/admin/orders?status=confirmed&from=2024-01-01T00:00:00Z" \
+  -H "Authorization: Bearer kik_admin_key"
+
+# Get single order
+curl -X GET http://localhost:8080/v1/admin/orders/ord_123 \
+  -H "Authorization: Bearer kik_admin_key"
+```
+
+Query parameters for listing orders:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `status` | string | Filter by order status |
+| `from` | RFC3339 timestamp | Filter orders from this time |
+| `to` | RFC3339 timestamp | Filter orders to this time |
+| `limit` | integer | Max results (1-100, default: 20) |
+| `cursor` | string | Pagination cursor |
 
 ## Products API Examples
 
