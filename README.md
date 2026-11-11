@@ -726,6 +726,131 @@ Sum: 15.99, Expected total: 16.00 → Residual: 0.01 added to Line 3 (largest)
 Final: [5.33, 5.33, 5.34] = 16.00 ✓
 ```
 
+## Event System & Webhooks
+
+Kikapu provides a transactional outbox pattern for reliable event delivery. Every state change emits an event in the same transaction, ensuring data consistency.
+
+### Event Types
+
+| Event Type | Description | Trigger |
+|------------|-------------|---------|
+| `order.created` | Order placed successfully | Checkout completion |
+| `order.paid` | Payment captured for order | Successful payment |
+| `order.fulfilled` | Order marked as fulfilled | Fulfillment operation |
+| `order.refunded` | Refund processed for order | Refund operation |
+| `stock.reserved` | Inventory reserved | Stock reservation |
+| `stock.released` | Inventory released | Reservation release/expiry |
+
+### Event Envelope
+
+All events follow this structure:
+
+```json
+{
+  "id": "evt_abc123def456",
+  "type": "order.paid",
+  "version": 1,
+  "aggregate_id": "ord_123",
+  "occurred_at": "2024-01-15T10:30:00Z",
+  "data": {
+    "order_id": "ord_123",
+    "payment_id": "pay_abc",
+    "total": 10000,
+    "currency": "USD",
+    "captured_at": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+### Webhook Delivery
+
+Events are delivered to configured subscribers via HTTP POST requests with the following headers:
+
+| Header | Description |
+|--------|-------------|
+| `X-Kikapu-Event` | Event type (e.g., `order.paid`) |
+| `X-Kikapu-Delivery` | Unique delivery ID for this attempt |
+| `X-Kikapu-Signature` | Signature for verification |
+| `Content-Type` | `application/json` |
+
+### Signature Verification
+
+Webhook signatures use HMAC-SHA256. The signature header format:
+
+```
+t=1705315200,v1=9f2c...
+```
+
+To verify a webhook:
+
+1. Parse the header to extract `t` (timestamp) and `v1` (signature)
+2. Create the signed payload: `timestamp + "." + request_body`
+3. Compute HMAC-SHA256 with your webhook secret
+4. Compare using constant-time comparison
+5. Reject timestamps older than 5 minutes
+
+```go
+import "github.com/kyambuthia/kikapu/internal/webhook"
+
+func handleWebhook(w http.ResponseWriter, r *http.Request) {
+    body, _ := io.ReadAll(r.Body)
+    sigHeader := r.Header.Get("X-Kikapu-Signature")
+    
+    err := webhook.Verify(webhookSecret, sigHeader, body, 5*time.Minute)
+    if err != nil {
+        // Handle invalid signature
+        http.Error(w, "Invalid signature", 401)
+        return
+    }
+    
+    // Process event...
+}
+```
+
+### Retry Schedule
+
+Failed deliveries are retried with exponential backoff:
+
+| Attempt | Delay |
+|---------|-------|
+| 1 | 1 second |
+| 2 | 5 seconds |
+| 3 | 30 seconds |
+| 4+ | 5 minutes (capped) |
+
+After 8 failed attempts, the event is moved to dead-letter status.
+
+### Response Handling
+
+- **2xx**: Delivery marked as sent, no retry
+- **4xx**: Immediate dead-letter (client error)
+- **5xx/timeout**: Retry with backoff
+
+### Transactional Guarantee
+
+Events are appended to the outbox in the same transaction as the state change. This ensures:
+
+- If the order write fails, no event is created
+- If payment fails, no events are emitted
+- Events cannot be lost due to delivery failures
+
+### Subscribing to Events
+
+Configure subscriptions to receive specific event types:
+
+```go
+store := worker.NewInMemorySubscriberStore()
+store.Add(worker.Subscription{
+    ID:     "sub_123",
+    URL:    "https://example.com/webhooks",
+    Secret: "your-webhook-secret",
+    Types:  []string{"order.paid", "order.refunded"},
+    Active: true,
+})
+```
+
+Use `"*"` as an event type to subscribe to all events.
+
 ## License
 
 MIT

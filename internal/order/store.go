@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kyambuthia/kikapu/internal/events"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/money"
 )
@@ -49,12 +50,14 @@ var ErrOrderNotFound = errors.New("order not found")
 type Handler struct {
 	store   *Store
 	counter Counter
+	outbox  events.Outbox
 }
 
-func NewHandler(store *Store, counter Counter) *Handler {
+func NewHandler(store *Store, counter Counter, outbox events.Outbox) *Handler {
 	return &Handler{
 		store:   store,
 		counter: counter,
+		outbox:  outbox,
 	}
 }
 
@@ -176,6 +179,20 @@ func (h *Handler) RefundOrder(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.Save(order); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to save order", httpx.RequestID(r))
 		return
+	}
+
+	if h.outbox != nil {
+		refundEvent, err := events.NewEvent(events.EventTypeOrderRefunded, order.ID, map[string]interface{}{
+			"order_id":    order.ID,
+			"refund_id":   refund.ID,
+			"amount":      refund.Amount.Value,
+			"currency":    refund.Amount.Currency,
+			"reason":      refund.Reason,
+			"refunded_at": refund.CreatedAt,
+		})
+		if err == nil {
+			h.outbox.Append(r.Context(), nil, refundEvent)
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, refundToResponse(refund))

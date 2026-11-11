@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kyambuthia/kikapu/internal/cart"
+	"github.com/kyambuthia/kikapu/internal/events"
 	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/payment"
 )
@@ -115,6 +116,7 @@ type Service struct {
 	inventoryStore  inventory.Store
 	paymentProvider payment.Provider
 	idempotency     *IdempotencyStore
+	outbox          events.Outbox
 	reservationTTL  time.Duration
 }
 
@@ -123,12 +125,14 @@ func NewService(
 	inventoryStore inventory.Store,
 	paymentProvider payment.Provider,
 	idempotencyStore *IdempotencyStore,
+	outbox events.Outbox,
 ) *Service {
 	return &Service{
 		cartStore:       cartStore,
 		inventoryStore:  inventoryStore,
 		paymentProvider: paymentProvider,
 		idempotency:     idempotencyStore,
+		outbox:          outbox,
 		reservationTTL:  15 * time.Minute,
 	}
 }
@@ -198,6 +202,31 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 
 	if err := s.idempotency.SaveOrder(idempotencyKey, order); err != nil {
 		return nil, err
+	}
+
+	if s.outbox != nil {
+		createdEvent, err := events.NewEvent(events.EventTypeOrderCreated, order.ID, map[string]interface{}{
+			"order_id":   order.ID,
+			"cart_id":    cartID,
+			"status":     string(order.Status),
+			"total":      order.Total,
+			"currency":   order.Currency,
+			"created_at": order.CreatedAt,
+		})
+		if err == nil {
+			s.outbox.Append(ctx, nil, createdEvent)
+		}
+
+		paidEvent, err := events.NewEvent(events.EventTypeOrderPaid, order.ID, map[string]interface{}{
+			"order_id":    order.ID,
+			"payment_id":  chargeResult.ID,
+			"total":       order.Total,
+			"currency":    order.Currency,
+			"captured_at": time.Now(),
+		})
+		if err == nil {
+			s.outbox.Append(ctx, nil, paidEvent)
+		}
 	}
 
 	c.Clear()

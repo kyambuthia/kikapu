@@ -10,6 +10,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/cart"
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/inventory"
+	"github.com/kyambuthia/kikapu/internal/outbox"
 	"github.com/kyambuthia/kikapu/internal/payment"
 )
 
@@ -18,7 +19,8 @@ func setupCartHandler() *CartHandler {
 	inventoryStore := inventory.NewMemoryStore(nil)
 	paymentProvider := payment.NewFakeProvider(payment.NoFailure)
 	idempotencyStore := checkout.NewIdempotencyStore()
-	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore)
+	eventOutbox := outbox.NewInMemoryOutbox()
+	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
 
 	inventoryStore.SetLevel("var001", "loc1", 100)
 	inventoryStore.SetLevel("var002", "loc1", 100)

@@ -211,52 +211,52 @@ func TestTaxFor(t *testing.T) {
 
 func TestRoundHalfEvenInt(t *testing.T) {
 	tests := []struct {
-		name       string
-		numerator  int64
+		name        string
+		numerator   int64
 		denominator int64
-		want       int64
+		want        int64
 	}{
 		{
-			name:       "round_down",
-			numerator:  53328,
-			denominator:   100,
-			want:       533,
+			name:        "round_down",
+			numerator:   53328,
+			denominator: 100,
+			want:        533,
 		},
 		{
-			name:       "round_up",
-			numerator:  53344,
-			denominator:   100,
-			want:       533,
+			name:        "round_up",
+			numerator:   53344,
+			denominator: 100,
+			want:        533,
 		},
 		{
-			name:       "exact_half_round_to_even",
-			numerator:  100050,
-			denominator:   100,
-			want:       1000,
+			name:        "exact_half_round_to_even",
+			numerator:   100050,
+			denominator: 100,
+			want:        1000,
 		},
 		{
-			name:       "exact_half_round_to_even_odd",
-			numerator:  100150,
-			denominator:   100,
-			want:       1002,
+			name:        "exact_half_round_to_even_odd",
+			numerator:   100150,
+			denominator: 100,
+			want:        1002,
 		},
 		{
-			name:       "negative_value",
-			numerator:  -53328,
-			denominator:   100,
-			want:       -533,
+			name:        "negative_value",
+			numerator:   -53328,
+			denominator: 100,
+			want:        -533,
 		},
 		{
-			name:       "zero",
-			numerator:  0,
-			denominator:   100,
-			want:       0,
+			name:        "zero",
+			numerator:   0,
+			denominator: 100,
+			want:        0,
 		},
 		{
-			name:       "inclusive_example",
-			numerator:  5332800,
-			denominator:   11600,
-			want:       460,
+			name:        "inclusive_example",
+			numerator:   5332800,
+			denominator: 11600,
+			want:        460,
 		},
 	}
 

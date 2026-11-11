@@ -15,6 +15,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/inventory"
+	"github.com/kyambuthia/kikapu/internal/outbox"
 	"github.com/kyambuthia/kikapu/internal/payment"
 	"github.com/kyambuthia/kikapu/internal/payment/mpesa"
 	"github.com/kyambuthia/kikapu/internal/payment/paystack"
@@ -22,6 +23,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
 	"github.com/kyambuthia/kikapu/internal/routes"
+	"github.com/kyambuthia/kikapu/internal/worker"
 )
 
 var (
@@ -115,8 +117,18 @@ func main() {
 		paymentProvider = payment.NewFakeProvider(payment.NoFailure)
 	}
 
+	eventOutbox := outbox.NewInMemoryOutbox()
 	idempotencyStore := checkout.NewIdempotencyStore()
-	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore)
+	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
+
+	subscriberStore := worker.NewInMemorySubscriberStore()
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	deliverer := worker.NewDeliverer(httpClient, eventOutbox, subscriberStore)
+
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	go deliverer.Run(workerCtx, 5*time.Second)
 
 	cartHandler := routes.NewCartHandler(cartStore, checkoutSvc)
 
@@ -165,6 +177,8 @@ func main() {
 	<-quit
 
 	logger.Info("shutting down server")
+
+	workerCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
