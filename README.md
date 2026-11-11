@@ -441,10 +441,26 @@ Response:
 
 #### Idempotency Behavior
 
-- Same `Idempotency-Key` + same cart → same order returned
-- Concurrent requests with same key → guaranteed single order creation
-- Idempotency prevents duplicate charges even under concurrent access
-- Cart is cleared after successful order
+- Same `Idempotency-Key` + same request body → same response returned (replay)
+- Same key + different request body → 409 Conflict (prevents accidental key reuse)
+- Concurrent requests with same key → 409 Conflict with `request_in_flight` error
+- Idempotency keys expire after 24 hours
+- Replayed responses include `X-Idempotency-Replayed: true` header
+
+#### TTL and Conflict Rules
+
+| Scenario | Status | Code | Description |
+|----------|--------|------|-------------|
+| Same key, same body (replay) | Original status | - | Original response returned |
+| Same key, different body | 409 | `idempotency_conflict` | Key reused with different request |
+| Same key, request in flight | 409 | `request_in_flight` | Concurrent request being processed |
+| Missing key header | 400 | `missing_idempotency_key` | Header required on mutations |
+| Key expired | - | - | New request proceeds (old record deleted) |
+
+| Cleanup | Default | Description |
+|---------|---------|-------------|
+| TTL | 24 hours | Records automatically expire |
+| Cleanup worker | Daily | Removes expired records from database |
 
 #### Error Cases
 
