@@ -11,6 +11,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/events"
 	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/payment"
+	"github.com/kyambuthia/kikapu/internal/platform/obs"
 )
 
 var (
@@ -141,24 +142,29 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 	ctx := context.Background()
 
 	if idempotencyKey == "" {
+		obs.CheckoutTotal.WithLabelValues("error").Inc()
 		return nil, ErrIdempotencyKeyMissing
 	}
 
 	if existingOrder, ok := s.idempotency.GetOrderForKey(idempotencyKey); ok {
+		obs.CheckoutTotal.WithLabelValues("success").Inc()
 		return existingOrder, nil
 	}
 
 	c, err := s.cartStore.Get(cartID)
 	if err != nil {
+		obs.CheckoutTotal.WithLabelValues("error").Inc()
 		return nil, err
 	}
 
 	if len(c.Lines) == 0 {
+		obs.CheckoutTotal.WithLabelValues("error").Inc()
 		return nil, ErrEmptyCart
 	}
 
 	total, err := c.Total()
 	if err != nil {
+		obs.CheckoutTotal.WithLabelValues("error").Inc()
 		return nil, err
 	}
 
@@ -167,6 +173,7 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 		res, err := s.inventoryStore.Reserve(ctx, line.VariantID, line.Quantity, s.reservationTTL)
 		if err != nil {
 			s.releaseAll(ctx, reservations)
+			obs.CheckoutTotal.WithLabelValues("stock_conflict").Inc()
 			return nil, err
 		}
 		reservations = append(reservations, res.ID)
@@ -180,6 +187,7 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 
 	if err != nil {
 		s.releaseAll(ctx, reservations)
+		obs.CheckoutTotal.WithLabelValues("declined").Inc()
 		return nil, err
 	}
 
@@ -201,6 +209,7 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 	}
 
 	if err := s.idempotency.SaveOrder(idempotencyKey, order); err != nil {
+		obs.CheckoutTotal.WithLabelValues("error").Inc()
 		return nil, err
 	}
 
@@ -233,6 +242,7 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 	if err := s.cartStore.Save(c); err != nil {
 	}
 
+	obs.CheckoutTotal.WithLabelValues("success").Inc()
 	return order, nil
 }
 

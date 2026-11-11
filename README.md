@@ -72,8 +72,9 @@ make test
 Configuration is environment-based:
 
  | Variable | Default | Description |
-|----------|---------|-------------|
+ |----------|---------|-------------|
  | `KIKAPU_ADDR` | `:8080` | Address to listen on |
+ | `KIKAPU_METRICS_ADDR` | `:9090` | Address for metrics endpoint |
  | `KIKAPU_MODE` | `api` | Operation mode (api\|worker) |
  | `KIKAPU_LOG_LEVEL` | `info` | Log level (debug\|info\|warn\|error) |
  | `PAYMENT_PROVIDER` | `fake` | Payment provider (fake\|paystack\|mpesa) |
@@ -86,6 +87,7 @@ Configuration is environment-based:
  | `MPESA_CALLBACK_URL` | `` | M-Pesa callback URL (required if PAYMENT_PROVIDER=mpesa) |
  | `MPESA_BASE_URL` | `` | M-Pesa API base URL (optional, defaults to https://sandbox.safaricom.co.ke) |
  | `MPESA_ALLOWED_CIDRS` | `` | Comma-separated list of allowed CIDRs for M-Pesa callbacks (required for production) |
+ | `OTEL_EXPORTER_OTLP_ENDPOINT` | `` | OpenTelemetry collector endpoint (optional, enables traces when set) |
 
 ## API Endpoints
 
@@ -341,16 +343,101 @@ Response:
 
 ### Error Responses
 
-All errors follow the standard error envelope format:
+ All errors follow the standard error envelope format:
+
+ ```json
+ {
+   "error": {
+     "code": "product_not_found",
+     "message": "product not found"
+   }
+ }
+  ```
+  
+## Observability
+
+Kikapu exposes Prometheus metrics on a separate listener for production monitoring.
+
+### Metrics Endpoint
+
+- **Endpoint**: `GET /metrics` on `--metrics-addr` (default: `:9090`)
+- **Format**: Prometheus text exposition format
+- **Separate listener** to avoid exposing metrics on the public API port
+
+### Available Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `kikapu_http_requests_total` | Counter | `route`, `method`, `status` | Total HTTP requests |
+| `kikapu_http_request_duration_seconds` | Histogram | `route` | Request latency in seconds |
+| `kikapu_checkout_total` | Counter | `result` | Checkout attempts by result |
+
+### Metric Labels
+
+**HTTP Request Metrics**:
+- `route`: Route pattern (e.g., `/v1/products/{id}`), never raw paths to keep cardinality bounded
+- `method`: HTTP method (GET, POST, etc.)
+- `status`: HTTP status code (200, 404, 500, etc.)
+
+**Checkout Metrics**:
+- `result`: One of `success`, `declined`, `stock_conflict`, `error`
+
+### Example Queries
+
+```promql
+# Request rate per route
+rate(kikapu_http_requests_total[5m])
+
+# 95th percentile latency
+histogram_quantile(0.95, rate(kikapu_http_request_duration_seconds_bucket[5m]))
+
+# Checkout success rate
+rate(kikapu_checkout_total{result="success"}[5m]) / rate(kikapu_checkout_total[5m])
+```
+
+### Log Schema
+
+All logs are structured JSON with the following fields:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `request_id` | Unique request identifier | `550e8400e29b41d4a716446655440000` |
+| `route` | Route pattern | `/v1/products/{id}` |
+| `method` | HTTP method | `GET` |
+| `status` | HTTP status code | `200` |
+| `duration_ms` | Request duration in milliseconds | `42` |
+| `error_code` | Error code (when applicable) | `product_not_found` |
+
+**Log Hygiene**: Logs never include:
+- Request/response bodies
+- HTTP headers
+- API keys or tokens
+- Raw phone numbers (redacted to `+254****678`)
+- Payment card numbers (redacted to `4111****1111`)
+
+### Distributed Tracing (Optional)
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable OpenTelemetry traces. When not set, tracing is a no-op.
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+./kikapu
+```
+
+### Example Log Entry
 
 ```json
 {
-  "error": {
-    "code": "product_not_found",
-    "message": "product not found"
-  }
+  "time": "2024-01-15T10:30:00.123Z",
+  "level": "INFO",
+  "msg": "request",
+  "request_id": "550e8400e29b41d4a716446655440000",
+  "route": "/v1/products/{id}",
+  "method": "GET",
+  "status": 200,
+  "duration_ms": 42
 }
- ```
+```
  
 ## Cart API Examples
 

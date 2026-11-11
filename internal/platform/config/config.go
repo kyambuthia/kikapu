@@ -7,6 +7,7 @@ import (
 
 type Config struct {
 	Addr                string
+	MetricsAddr         string
 	Mode                string
 	LogLevel            string
 	PaymentProvider     string
@@ -19,11 +20,13 @@ type Config struct {
 	MpesaCallbackURL    string
 	MpesaBaseURL        string
 	MpesaAllowedCIDRs   string
+	OTLPEndpoint        string
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
 		Addr:                getEnv("KIKAPU_ADDR", ":8080"),
+		MetricsAddr:         getEnv("KIKAPU_METRICS_ADDR", ":9090"),
 		Mode:                getEnv("KIKAPU_MODE", "api"),
 		LogLevel:            getEnv("KIKAPU_LOG_LEVEL", "info"),
 		PaymentProvider:     getEnv("PAYMENT_PROVIDER", "fake"),
@@ -36,6 +39,7 @@ func Load() (*Config, error) {
 		MpesaCallbackURL:    getEnv("MPESA_CALLBACK_URL", ""),
 		MpesaBaseURL:        getEnv("MPESA_BASE_URL", ""),
 		MpesaAllowedCIDRs:   getEnv("MPESA_ALLOWED_CIDRS", ""),
+		OTLPEndpoint:        getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 	}
 
 	if err := cfg.Validate(); err != nil {

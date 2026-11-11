@@ -86,7 +86,12 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func LoggingMiddleware(logger interface{ Info(string, ...any) }) func(http.Handler) http.Handler {
+type LoggingMiddlewareConfig struct {
+	GetRoute func(*http.Request) string
+	GetError func(*http.Request) string
+}
+
+func LoggingMiddlewareWithConfig(logger interface{ Info(string, ...any) }, cfg LoggingMiddlewareConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -94,13 +99,35 @@ func LoggingMiddleware(logger interface{ Info(string, ...any) }) func(http.Handl
 			next.ServeHTTP(rw, r)
 			duration := time.Since(start)
 			requestID := RequestID(r)
-			logger.Info("request",
+
+			route := r.URL.Path
+			if cfg.GetRoute != nil {
+				if pattern := cfg.GetRoute(r); pattern != "" {
+					route = pattern
+				}
+			}
+
+			errorCode := ""
+			if cfg.GetError != nil {
+				errorCode = cfg.GetError(r)
+			}
+
+			args := []interface{}{
+				"request_id", requestID,
+				"route", route,
 				"method", r.Method,
-				"path", r.URL.Path,
 				"status", rw.statusCode,
 				"duration_ms", duration.Milliseconds(),
-				"request_id", requestID,
-			)
+			}
+			if errorCode != "" {
+				args = append(args, "error_code", errorCode)
+			}
+
+			logger.Info("request", args...)
 		})
 	}
+}
+
+func LoggingMiddleware(logger interface{ Info(string, ...any) }) func(http.Handler) http.Handler {
+	return LoggingMiddlewareWithConfig(logger, LoggingMiddlewareConfig{})
 }

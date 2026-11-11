@@ -24,6 +24,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
 	"github.com/kyambuthia/kikapu/internal/routes"
 	"github.com/kyambuthia/kikapu/internal/worker"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -152,7 +153,9 @@ func main() {
 		})
 	})
 
-	handler := httpx.LoggingMiddleware(logger)(httpx.RequestIDMiddleware(mux))
+	handler := httpx.LoggingMiddlewareWithConfig(logger, httpx.LoggingMiddlewareConfig{
+		GetRoute: obs.GetRoutePattern,
+	})(obs.MetricsMiddleware(httpx.RequestIDMiddleware(mux)))
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
@@ -163,11 +166,30 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	logger.Info("starting server", "version", version, "commit", commit, "addr", cfg.Addr, "mode", cfg.Mode)
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+
+	metricsServer := &http.Server{
+		Addr:              cfg.MetricsAddr,
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
+
+	logger.Info("starting server", "version", version, "commit", commit, "addr", cfg.Addr, "mode", cfg.Mode, "metrics_addr", cfg.MetricsAddr)
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	go func() {
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("metrics server error", "error", err)
 			os.Exit(1)
 		}
 	}()
@@ -185,6 +207,11 @@ func main() {
 
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Error("server shutdown error", "error", err)
+		os.Exit(1)
+	}
+
+	if err := metricsServer.Shutdown(ctx); err != nil {
+		logger.Error("metrics server shutdown error", "error", err)
 		os.Exit(1)
 	}
 

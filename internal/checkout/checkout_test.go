@@ -11,6 +11,8 @@ import (
 	"github.com/kyambuthia/kikapu/internal/outbox"
 	"github.com/kyambuthia/kikapu/internal/payment"
 	"github.com/kyambuthia/kikapu/internal/platform/money"
+	"github.com/kyambuthia/kikapu/internal/platform/obs"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestService_PlaceOrder_DoubleSubmit(t *testing.T) {
@@ -319,5 +321,79 @@ func TestOutboxAtomic(t *testing.T) {
 
 	if len(records) != 0 {
 		t.Errorf("Claim() returned %d events, want 0 (no events should exist due to failed order)", len(records))
+	}
+}
+
+func TestService_Checkout_Metrics(t *testing.T) {
+	cartStore := cart.NewInMemoryStore()
+	clock := &inventory.FakeClock{Current: time.Now()}
+	inventoryStore := inventory.NewMemoryStore(clock)
+	paymentProvider := payment.NewFakeProvider(payment.NoFailure)
+	idempotencyStore := NewIdempotencyStore()
+	eventOutbox := outbox.NewInMemoryOutbox()
+
+	inventoryStore.SetLevel("var001", "loc1", 10)
+
+	c := cart.NewCart("cart001", "USD")
+	c.AddItem("var001", 2, money.NewAmount(1000, "USD"))
+	cartStore.Save(c)
+
+	svc := NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
+
+	metricBefore := &dto.Metric{}
+	_ = obs.CheckoutTotal.WithLabelValues("success").Write(metricBefore)
+	before := metricBefore.GetCounter().GetValue()
+
+	_, err := svc.PlaceOrder("cart001", "idem-key-metrics-"+time.Now().Format("20060102150405"))
+	if err != nil {
+		t.Fatalf("PlaceOrder() error: %v", err)
+	}
+
+	metricAfter := &dto.Metric{}
+	err = obs.CheckoutTotal.WithLabelValues("success").Write(metricAfter)
+	if err != nil {
+		t.Fatalf("Failed to get metric: %v", err)
+	}
+	after := metricAfter.GetCounter().GetValue()
+
+	if after <= before {
+		t.Errorf("Expected checkout_total{result=\"success\"} to increment, before=%v, after=%v", before, after)
+	}
+}
+
+func TestService_Checkout_Metrics_Declined(t *testing.T) {
+	cartStore := cart.NewInMemoryStore()
+	clock := &inventory.FakeClock{Current: time.Now()}
+	inventoryStore := inventory.NewMemoryStore(clock)
+	paymentProvider := payment.NewFakeProvider(payment.Declined)
+	idempotencyStore := NewIdempotencyStore()
+	eventOutbox := outbox.NewInMemoryOutbox()
+
+	inventoryStore.SetLevel("var001", "loc1", 10)
+
+	c := cart.NewCart("cart001", "USD")
+	c.AddItem("var001", 2, money.NewAmount(1000, "USD"))
+	cartStore.Save(c)
+
+	svc := NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
+
+	metricBefore := &dto.Metric{}
+	_ = obs.CheckoutTotal.WithLabelValues("declined").Write(metricBefore)
+	before := metricBefore.GetCounter().GetValue()
+
+	_, err := svc.PlaceOrder("cart001", "idem-key-declined-"+time.Now().Format("20060102150405"))
+	if err == nil {
+		t.Fatal("Expected place order to fail")
+	}
+
+	metricAfter := &dto.Metric{}
+	err = obs.CheckoutTotal.WithLabelValues("declined").Write(metricAfter)
+	if err != nil {
+		t.Fatalf("Failed to get metric: %v", err)
+	}
+	after := metricAfter.GetCounter().GetValue()
+
+	if after <= before {
+		t.Errorf("Expected checkout_total{result=\"declined\"} to increment, before=%v, after=%v", before, after)
 	}
 }
