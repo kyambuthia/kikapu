@@ -95,17 +95,107 @@ Configuration is environment-based:
 | GET | `/readyz` | Readiness check - returns 200 |
 | GET | `/v1/version` | Version info - returns version and commit |
 | GET | `/v1/products` | List products with pagination |
-| GET | `/v1/products/{slug}` | Get a single product by slug |
-| GET | `/v1/regions` | List all regions |
-| GET | `/v1/channels` | List all sales channels |
-| POST | `/v1/carts` | Create a new cart |
-| GET | `/v1/carts/{id}` | Get a cart by ID |
-| DELETE | `/v1/carts/{id}` | Delete (clear) a cart |
-| POST | `/v1/carts/{id}/items` | Add an item to cart |
-| PATCH | `/v1/carts/{id}/items/{variantID}` | Update item quantity |
-| DELETE | `/v1/carts/{id}/items/{variantID}` | Remove item from cart |
- | POST | `/v1/checkout` | Place an order (requires Idempotency-Key header) |
- | POST | `/v1/webhooks/paystack` | Paystack webhook endpoint |
+ | GET | `/v1/products/{slug}` | Get a single product by slug |
+ | GET | `/v1/regions` | List all regions |
+ | GET | `/v1/channels` | List all sales channels |
+ | POST | `/v1/carts` | Create a new cart |
+ | GET | `/v1/carts/{id}` | Get a cart by ID |
+ | DELETE | `/v1/carts/{id}` | Delete (clear) a cart |
+ | POST | `/v1/carts/{id}/items` | Add an item to cart |
+ | PATCH | `/v1/carts/{id}/items/{variantID}` | Update item quantity |
+ | DELETE | `/v1/carts/{id}/items/{variantID}` | Remove item from cart |
+  | POST | `/v1/checkout` | Place an order (requires Idempotency-Key header) |
+  | POST | `/v1/webhooks/paystack` | Paystack webhook endpoint |
+ | GET | `/v1/orders/{id}` | Get order details |
+ | POST | `/v1/orders/{id}/refund` | Refund order (requires `Idempotency-Key`) |
+ | POST | `/v1/admin/keys` | Create API key (admin only) |
+ | GET | `/v1/admin/keys` | List API keys (admin only) |
+ | DELETE | `/v1/admin/keys/{id}` | Revoke API key (admin only) |
+
+## API Key Authentication
+
+Admin endpoints and partner surfaces use scoped API keys for authentication. API keys use the `Authorization` header with the Bearer scheme:
+
+```
+Authorization: Bearer kik_<key>
+```
+
+### Scopes
+
+API keys are scoped to specific permissions:
+
+| Scope | Description |
+|-------|-------------|
+| `products:read` | Read product catalog |
+| `orders:read` | Read order information |
+| `orders:write` | Create and modify orders |
+| `stock:read` | Read inventory levels |
+| `stock:write` | Modify inventory |
+| `admin:read` | Read admin data |
+| `admin:write` | Perform admin operations |
+
+### Creating API Keys
+
+Create a new API key:
+
+```bash
+curl -X POST http://localhost:8080/v1/admin/keys \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{
+    "name": "Integration Key",
+    "scopes": ["products:read", "orders:write"]
+  }'
+```
+
+Response:
+```json
+{
+  "id": "key_abc123...",
+  "name": "Integration Key",
+  "prefix": "kik_abc1",
+  "key": "kik_abc123def456...",
+  "scopes": ["products:read", "orders:write"]
+}
+```
+
+**Important**: The `key` field is shown **only once** when created. Store it securely; only the SHA-256 hash is stored.
+
+### Listing API Keys
+
+List all keys (shows prefix and scopes only, no key material):
+
+```bash
+curl -X GET http://localhost:8080/v1/admin/keys \
+  -H "Authorization: Bearer kik_admin_key"
+```
+
+### Revoking API Keys
+
+Revoke (not delete) a key:
+
+```bash
+curl -X DELETE http://localhost:8080/v1/admin/keys/key_abc123... \
+  -H "Authorization: Bearer kik_admin_key"
+```
+
+### Authentication Errors
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 401 | `missing_key` | No `Authorization` header provided |
+| 401 | `invalid_key` | Key not found or invalid format |
+| 401 | `expired_key` | Key has expired |
+| 401 | `revoked_key` | Key has been revoked |
+| 403 | `missing_scope` | Key lacks required scope (includes `required_scope` in response) |
+
+### Security Notes
+
+- Only the SHA-256 hash of the key is stored; the actual key is never persisted
+- Keys appear only once, in the create response (store securely)
+- Logs show only the key prefix (first 8 characters), never the full key
+- Constant-time comparison prevents timing attacks
+- `RevokedAt` takes precedence over `ExpiresAt`
 
 ## Products API Examples
 
