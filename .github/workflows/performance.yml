@@ -55,7 +55,7 @@ jobs:
 
       - name: Start test server
         run: |
-          go run ./cmd/api -addr 127.0.0.1:8080 &
+          go run ./cmd/kikapu -addr 127.0.0.1:8080 &
           sleep 5
 
       - name: Run performance test
