@@ -118,7 +118,7 @@ func run(ctx context.Context, scenario string, workers int, duration time.Durati
 			defer wg.Done()
 
 			client := &http.Client{
-				Timeout: duration * 10,
+				Timeout: 30 * time.Second,
 				CheckRedirect: func(req *http.Request, via []*http.Request) error {
 					return http.ErrUseLastResponse
 				},
