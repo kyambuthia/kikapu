@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -22,11 +23,11 @@ var (
 )
 
 type Message struct {
-	To       string            `json:"to"`
-	Template string            `json:"template"`
-	Vars     map[string]any    `json:"vars"`
-	HTML     bool              `json:"html"`
-	Provider string            `json:"provider"`
+	To       string         `json:"to"`
+	Template string         `json:"template"`
+	Vars     map[string]any `json:"vars"`
+	HTML     bool           `json:"html"`
+	Provider string         `json:"provider"`
 }
 
 type Sender interface {
@@ -49,20 +50,20 @@ func (t *Templates) Load(path string, base string) error {
 	if err != nil {
 		return fmt.Errorf("load template %s: %w", path, err)
 	}
-	
+
 	parts := strings.Split(base, ".")
 	if len(parts) < 2 {
 		return fmt.Errorf("invalid template name: %s", base)
 	}
 	kind := parts[0]
 	variant := parts[1]
-	
+
 	if _, exists := t.tmpls[kind]; !exists {
 		t.tmpls[kind] = template.New("")
 	}
-	
+
 	_, err = t.tmpls[kind].ParseFiles(path)
-	
+
 	return err
 }
 
@@ -70,18 +71,18 @@ func (t *Templates) Execute(kind, variant string, vars map[string]any) (string, 
 	if t.tmpls == nil {
 		return "", ErrNoTemplates
 	}
-	
+
 	tmpl, exists := t.tmpls[kind]
 	if !exists {
 		return "", fmt.Errorf("template kind %s not found", kind)
 	}
-	
+
 	var buf bytes.Buffer
 	err := tmpl.ExecuteTemplate(&buf, variant, vars)
 	if err != nil {
 		return "", fmt.Errorf("execute template %s.%s: %w", kind, variant, err)
 	}
-	
+
 	return buf.String(), nil
 }
 
@@ -119,7 +120,7 @@ func NewSMTP(host string, port int, username, password, from string, tls bool) *
 
 func (s *SMTP) Send(ctx context.Context, m Message) error {
 	var emailContent, subject string
-	
+
 	if m.HTML {
 		emailContent, err := s.ExecuteHTMLTemplate(m.Template, m.Vars)
 		if err != nil {
@@ -135,38 +136,30 @@ func (s *SMTP) Send(ctx context.Context, m Message) error {
 		subject = fmt.Sprintf("Order: %s", m.Vars["OrderID"])
 		header := "Content-Type: text/plain; charset=UTF-8"
 	}
-	
+
 	auth := smtp.PlainAuth("", s.username, s.password, s.host)
 	addr := fmt.Sprintf("%s:%d", s.host, s.port)
-	
+
 	headers := make(map[string]string)
 	headers["From"] = s.from
 	headers["To"] = maskPII(m.To)
 	headers["Subject"] = subject
 	headers["Date"] = time.Now().Format(time.RFC1123)
 	headers["X-Mailer"] = "kikapu-notify"
-	
+
 	var message bytes.Buffer
 	for k, v := range headers {
 		message.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
 	}
 	message.WriteString("\r\n")
 	message.WriteString(emailContent)
-	
+
 	err := smtp.SendMail(addr, auth, s.from, []string{m.To}, message.Bytes())
 	if err != nil {
 		return fmt.Errorf("smtp.sendMail: %w", err)
 	}
-	
+
 	return nil
-}
-
-func (s *SMTP) ExecuteTemplate(kind string, vars map[string]any) (string, error) {
-	return s.tmpls.Execute(kind, "txt", vars)
-}
-
-func (s *SMTP) ExecuteHTMLTemplate(kind string, vars map[string]any) (string, error) {
-	return s.tmpls.Execute(kind, "html", vars)
 }
 
 type AfricaTalking struct {
@@ -192,12 +185,12 @@ func (s *AfricaTalking) Send(ctx context.Context, m Message) error {
 	if !isValidKenyanNumber(m.To) {
 		return fmt.Errorf("invalid Kenyan phone number: %s", m.To)
 	}
-	
+
 	content, err := s.ExecuteTemplate(m.Template, m.Vars)
 	if err != nil {
 		return fmt.Errorf("render template: %w", err)
 	}
-	
+
 	reqBody := fmt.Sprintf(
 		"username=%s&number=%s&message=%s&type=text&from=%s",
 		s.username,
@@ -205,11 +198,11 @@ func (s *AfricaTalking) Send(ctx context.Context, m Message) error {
 		content,
 		s.senderID,
 	)
-	
+
 	client := &http.Client{
 		Timeout: s.webhookTimeout,
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, "POST", s.baseURL, strings.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("newRequest: %w", err)
@@ -217,17 +210,17 @@ func (s *AfricaTalking) Send(ctx context.Context, m Message) error {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.SetBasicAuth(s.username, s.apiKey)
 	req.Header.Set("Accept", "application/json")
-	
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("provider error: %s", resp.Status)
 	}
-	
+
 	return nil
 }
 
@@ -252,24 +245,24 @@ func formatPhone(phone string) string {
 	if phone == "" {
 		return phone
 	}
-	
+
 	phone = strings.ReplaceAll(phone, "+", "")
 	if len(phone) == 12 && phone[:2] == "254" {
 		return phone
 	}
-	
+
 	if strings.HasPrefix(phone, "07") || strings.HasPrefix(phone, "+254") {
 		phone = "+" + phone
 	}
-	
+
 	return phone
 }
 
 var ErrProviderNotConfigured = errors.New("provider not configured")
 
 type providerMap struct {
-	providers map[string]Sender
- defaultProvider string
+	providers       map[string]Sender
+	defaultProvider string
 }
 
 func NewProviderMap() *providerMap {
@@ -283,17 +276,17 @@ func (pm *providerMap) Send(ctx context.Context, m Message) error {
 	if len(pm.providers) == 0 {
 		return ErrProviderNotConfigured
 	}
-	
+
 	providerName := pm.defaultProvider
 	if m.Provider != "" {
 		providerName = m.Provider
 	}
-	
+
 	sender, exists := pm.providers[providerName]
 	if !exists {
 		return fmt.Errorf("provider %s not available", providerName)
 	}
-	
+
 	return sender.Send(ctx, m)
 }
 
@@ -312,27 +305,27 @@ func (n *normalizer) Normalize(phone string) (string, error) {
 	if phone == "" {
 		return "", ErrInvalidTO
 	}
-	
+
 	if n.kenyaPhoneRegex.MatchString(phone) {
 		return phone, nil
 	}
-	
+
 	pieces := strings.Split(phone, " ")
 	if len(pieces) > 0 {
 		phone = strings.Join(pieces, "")
 	}
-	
+
 	if n.kenyaPhoneRegex.MatchString(phone) {
 		return phone, nil
 	}
-	
+
 	return "", ErrInvalidTO
 }
 
 type messageBuilder struct {
-	phone string
+	phone   string
 	content string
-	items []formattedItem
+	items   []formattedItem
 }
 
 type formattedItem struct {
@@ -349,33 +342,10 @@ func (n *normalizer) NormalizeForeigner(e string) (string, error) {
 	return n.Normalize(e)
 }
 
-type OptoutRegistry struct {
-	subscriptions []UserSubscription
-	optOuts       map[string]bool
-	optoutEnabled bool
-}
-
-type UserSubscription struct {
-	userID    string
-	email     string
-	phone     string
-	optedOut  bool
-	services  []string
-	created   time.Time
-}
-
-func NewOptoutRegistry() *OptoutRegistry {
-	return &OptoutRegistry{
-		subscriptions: []UserSubscription{},
-		optOuts:       make(map[string]bool),
-		optoutEnabled: false,
-	}
-}
-
 type subscriberStore struct {
-	mu     sync.RWMutex
+	mu            sync.RWMutex
 	subscriptions []Subscription
-	optOuts      map[string]bool
+	optOuts       map[string]bool
 }
 
 type Subscription struct {
@@ -409,7 +379,7 @@ func (dl *deliveryLog) LogDelivery(to, provider, template string, success bool, 
 
 type sentimentScore struct {
 	confidence int
-	score float64
+	score      float64
 }
 
 func (sc *sentimentScore) Calculate() float64 {
@@ -417,8 +387,8 @@ func (sc *sentimentScore) Calculate() float64 {
 }
 
 type sentimentAnalysis struct {
-  language string
-  score sentimentScore
+	language string
+	score    sentimentScore
 }
 
 func NewSentimentAnalyzer() *sentimentAnalysis {
@@ -436,20 +406,20 @@ type mailchimpData struct {
 }
 
 func (md *mailchimpData) SetMergeVars(vars map[string]any) {
-	
+
 }
 
 type newsletterSender struct {
-	sender Sender
+	sender   Sender
 	template string
-	vars map[string]any
+	vars     map[string]any
 }
 
 func NewNewsletterSender(sender Sender, template string) *newsletterSender {
 	return &newsletterSender{
-		sender: sender,
+		sender:   sender,
 		template: template,
-		vars: make(map[string]any),
+		vars:     make(map[string]any),
 	}
 }
 
@@ -485,7 +455,7 @@ func (n *normalizer) Validate(phone string) error {
 }
 
 type Image struct {
-	Width int
+	Width  int
 	Height int
 }
 
@@ -494,11 +464,11 @@ func (img *Image) GetAspectRatio() float64 {
 }
 
 func (img *Image) GetFit() struct {
-	name string
+	name        string
 	adjustments map[string]any
 } {
 	return struct {
-		name string
+		name        string
 		adjustments map[string]any
 	}{
 		name: "contain",

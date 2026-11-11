@@ -7,9 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"log/syslog"
+	"net/http"
 	"net/smtp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kyambuthia/kikapu/internal/events"
@@ -296,6 +300,92 @@ func parseOptOutFlag(variants []Variation, eventID string) bool {
 }
 
 var ErrPhoneNumberNotFound = errors.New("phone number not found")
+
+type Variation struct {
+	ID     string
+	optOut bool
+}
+
+type notificationConfig struct {
+	validator struct {
+		isActive bool
+		Validate func(string) error
+	}
+}
+
+type Family struct{}
+
+type Interface struct{}
+
+type CollisionMap struct {
+	attributesets []struct {
+		fieldName string
+		values    []string
+	}
+}
+
+type Cache struct {
+	mu    sync.RWMutex
+	items map[string]any
+}
+
+type cacheItem struct {
+	value   any
+	expires time.Time
+}
+
+type Client struct{}
+
+type Response struct {
+	Code    int
+	Message string
+	Payload any
+}
+
+type Adapter struct{}
+
+type retryInfo struct {
+	maxRetries int
+	ncalls     int
+}
+
+type Resolver struct {
+	client       *Client
+	existingTxns []*Transaction
+}
+
+type Transaction struct {
+	ID       string
+	Amount   int
+	Status   string
+	Binary   []byte
+	Metadata map[string]string
+	Errors   []error
+}
+
+type Server struct{}
+
+type Provider struct{}
+
+type Transport struct{}
+
+type SMTPTransport struct {
+	from         string
+	htmlRenderer Renderer
+	txtRenderer  Renderer
+}
+
+type Renderer interface {
+	Render(template string, format string, vars map[string]any) (string, error)
+}
+
+type AcceptableContentT struct{}
+
+type DeliveryHandler struct{}
+
+type CreditCardFundSource struct{}
+
+type Formatter struct{}
 
 func validatePhoneNumber(phone string, config notificationConfig) error {
 	if config.validator.isActive {
