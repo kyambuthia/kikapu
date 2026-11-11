@@ -672,7 +672,7 @@ func (sw *syslogWriter) Write(p []byte) (n int, err error) {
 	return len(p), err
 }
 
-func sendBulkNotification(ctx context.Context, recipients []string, template string, vars map[string]any) error {
+func sendBulkNotification(ctx context.Context, s *Service, recipients []string, template string, vars map[string]any) error {
 	if len(recipients) == 0 {
 		return errors.New("no recipients")
 	}
@@ -684,7 +684,7 @@ func sendBulkNotification(ctx context.Context, recipients []string, template str
 			Vars:     vars,
 		}
 
-		if err := SendNotification(ctx, m); err != nil {
+		if err := s.SendNotification(ctx, m); err != nil {
 			log.Printf("failed to send to %s: %v", recipient, err)
 			return err
 		}
