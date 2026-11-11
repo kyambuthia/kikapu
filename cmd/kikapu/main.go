@@ -28,6 +28,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
 	"github.com/kyambuthia/kikapu/internal/routes"
 	"github.com/kyambuthia/kikapu/internal/worker"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -38,6 +39,7 @@ var (
 func main() {
 	addr := flag.String("addr", ":8080", "address to listen on")
 	mode := flag.String("mode", "api", "operation mode (api|worker|migrate)")
+	metricsAddr := flag.String("metrics-addr", "", "address for metrics endpoint (default from env)")
 	migrationsDir := flag.String("migrations", "migrations", "migrations directory")
 	flag.Parse()
 
@@ -53,6 +55,9 @@ func main() {
 	if *mode != "api" {
 		cfg.Mode = *mode
 	}
+	if *metricsAddr != "" {
+		cfg.MetricsAddr = *metricsAddr
+	}
 
 	level := slog.LevelInfo
 	if cfg.LogLevel == "debug" {
@@ -63,6 +68,13 @@ func main() {
 		level = slog.LevelError
 	}
 	logger := obs.NewLogger(level)
+
+	shutdownTracer, err := obs.InitTracer(context.Background(), "kikapu", version)
+	if err != nil {
+		logger.Error("failed to initialize tracer", "error", err)
+		os.Exit(1)
+	}
+	defer shutdownTracer(context.Background())
 
 	if cfg.Mode == "migrate" {
 		databaseURL := os.Getenv("DATABASE_URL")
@@ -199,24 +211,22 @@ func main() {
 	catalogHandler.RegisterRoutes(mux)
 	cartHandler.RegisterRoutes(mux)
 
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		obs.SetRoutePattern(r, "/readyz")
 		w.WriteHeader(http.StatusOK)
 	})
 
 	mux.HandleFunc("/v1/version", func(w http.ResponseWriter, r *http.Request) {
+		obs.SetRoutePattern(r, "/v1/version")
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{
 			"version": version,
 			"commit":  commit,
 		})
 	})
 
-	handler := httpx.LoggingMiddleware(logger)(httpx.RequestIDMiddleware(mux))
+	handler := httpx.LoggingMiddleware(logger)(obs.MetricsMiddleware(httpx.RequestIDMiddleware(mux)))
 
-	server := &http.Server{
+	apiServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -225,11 +235,35 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	logger.Info("starting server", "version", version, "commit", commit, "addr", cfg.Addr, "mode", cfg.Mode)
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	metricsServer := &http.Server{
+		Addr:              cfg.MetricsAddr,
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	logger.Info("starting servers", "version", version, "commit", commit, "addr", cfg.Addr, "metrics_addr", cfg.MetricsAddr, "mode", cfg.Mode)
 
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server error", "error", err)
+		logger.Info("starting API server", "addr", cfg.Addr)
+		if err := apiServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("API server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	go func() {
+		logger.Info("starting metrics server", "addr", cfg.MetricsAddr)
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("metrics server error", "error", err)
 			os.Exit(1)
 		}
 	}()
@@ -238,19 +272,33 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	logger.Info("shutting down server")
+	logger.Info("shutting down servers")
 
 	workerCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
-		logger.Error("server shutdown error", "error", err)
-		os.Exit(1)
-	}
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-	logger.Info("server stopped")
+	go func() {
+		defer wg.Done()
+		if err := apiServer.Shutdown(ctx); err != nil {
+			logger.Error("API server shutdown error", "error", err)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		if err := metricsServer.Shutdown(ctx); err != nil {
+			logger.Error("metrics server shutdown error", "error", err)
+		}
+	}()
+
+	wg.Wait()
+
+	logger.Info("servers stopped")
 }
 
 type inMemoryIdempotencyRecord struct {

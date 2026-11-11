@@ -10,6 +10,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/channel"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
+	"github.com/kyambuthia/kikapu/internal/platform/obs"
 	"github.com/kyambuthia/kikapu/internal/region"
 )
 
@@ -162,6 +163,7 @@ func convertVariants(variants []catalog.Variant, fields map[string]bool) []Varia
 }
 
 func (h *CatalogHandler) listProducts(w http.ResponseWriter, r *http.Request) {
+	obs.SetRoutePattern(r, "/v1/products")
 	if r.Method != http.MethodGet {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
 		return
@@ -251,6 +253,7 @@ func (h *CatalogHandler) listProducts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CatalogHandler) getProduct(w http.ResponseWriter, r *http.Request) {
+	obs.SetRoutePattern(r, "/v1/products/{slug}")
 	if r.Method != http.MethodGet {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
 		return

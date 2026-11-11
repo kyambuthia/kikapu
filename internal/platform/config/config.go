@@ -7,6 +7,7 @@ import (
 
 type Config struct {
 	Addr                string
+	MetricsAddr         string
 	Mode                string
 	LogLevel            string
 	PaymentProvider     string
@@ -24,6 +25,7 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		Addr:                getEnv("KIKAPU_ADDR", ":8080"),
+		MetricsAddr:         getEnv("KIKAPU_METRICS_ADDR", ":9090"),
 		Mode:                getEnv("KIKAPU_MODE", "api"),
 		LogLevel:            getEnv("KIKAPU_LOG_LEVEL", "info"),
 		PaymentProvider:     getEnv("PAYMENT_PROVIDER", "fake"),

@@ -10,6 +10,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/money"
+	"github.com/kyambuthia/kikapu/internal/platform/obs"
 )
 
 type CartHandler struct {
@@ -58,6 +59,7 @@ func (h *CartHandler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (h *CartHandler) CreateCart(w http.ResponseWriter, r *http.Request) {
+	obs.SetRoutePattern(r, "POST /v1/carts")
 	var req CreateCartRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", httpx.RequestID(r))
@@ -81,6 +83,7 @@ func (h *CartHandler) CreateCart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CartHandler) GetCart(w http.ResponseWriter, r *http.Request) {
+	obs.SetRoutePattern(r, "GET /v1/carts/{id}")
 	id := r.PathValue("id")
 
 	c, err := h.store.Get(id)
@@ -97,6 +100,7 @@ func (h *CartHandler) GetCart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CartHandler) DeleteCart(w http.ResponseWriter, r *http.Request) {
+	obs.SetRoutePattern(r, "DELETE /v1/carts/{id}")
 	id := r.PathValue("id")
 
 	c, err := h.store.Get(id)
@@ -119,6 +123,7 @@ func (h *CartHandler) DeleteCart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CartHandler) AddItem(w http.ResponseWriter, r *http.Request) {
+	obs.SetRoutePattern(r, "POST /v1/carts/{id}/items")
 	id := r.PathValue("id")
 
 	var req AddItemRequest
@@ -162,6 +167,7 @@ func (h *CartHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CartHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
+	obs.SetRoutePattern(r, "PATCH /v1/carts/{id}/items/{variantID}")
 	id := r.PathValue("id")
 	variantID := r.PathValue("variantID")
 
@@ -204,6 +210,7 @@ func (h *CartHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CartHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
+	obs.SetRoutePattern(r, "DELETE /v1/carts/{id}/items/{variantID}")
 	id := r.PathValue("id")
 	variantID := r.PathValue("variantID")
 
@@ -236,6 +243,7 @@ func (h *CartHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CartHandler) Checkout(w http.ResponseWriter, r *http.Request) {
+	obs.SetRoutePattern(r, "POST /v1/checkout")
 	idempotencyKey := r.Header.Get("Idempotency-Key")
 	if idempotencyKey == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "missing_idempotency_key", "Idempotency-Key header is required", httpx.RequestID(r))
@@ -251,17 +259,21 @@ func (h *CartHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 	order, err := h.checkout.PlaceOrder(req.CartID, idempotencyKey)
 	if err != nil {
 		if errors.Is(err, cart.ErrCartNotFound) {
+			obs.InstrumentCheckout(obs.CheckoutResultError)
 			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found", httpx.RequestID(r))
 			return
 		}
 		if errors.Is(err, checkout.ErrEmptyCart) {
+			obs.InstrumentCheckout(obs.CheckoutResultError)
 			httpx.WriteError(w, http.StatusBadRequest, "empty_cart", err.Error(), httpx.RequestID(r))
 			return
 		}
+		obs.InstrumentCheckout(obs.CheckoutResultError)
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to place order", httpx.RequestID(r))
 		return
 	}
 
+	obs.InstrumentCheckout(obs.CheckoutResultSuccess)
 	httpx.WriteJSON(w, http.StatusOK, CheckoutResponse{
 		OrderID: order.ID,
 		Status:  string(order.Status),
