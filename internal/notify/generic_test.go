@@ -14,12 +14,6 @@ import (
 	"time"
 )
 
-var (
-	ErrInvalidTO   = errors.New("invalid recipient address")
-	ErrOptedOut    = errors.New("recipient opted out")
-	ErrNoTemplates = errors.New("no templates available")
-)
-
 type TestSender struct {
 	mu       sync.Mutex
 	sent     []Message
