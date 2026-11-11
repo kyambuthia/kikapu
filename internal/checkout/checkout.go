@@ -22,10 +22,11 @@ var (
 type OrderStatus string
 
 const (
-	OrderStatusPending   OrderStatus = "pending"
-	OrderStatusPaid      OrderStatus = "paid"
-	OrderStatusFailed    OrderStatus = "failed"
-	OrderStatusCancelled OrderStatus = "cancelled"
+	OrderStatusPending                         OrderStatus = "pending"
+	OrderStatusPaid                            OrderStatus = "paid"
+	OrderStatusFailed                          OrderStatus = "failed"
+	OrderStatusCancelled                       OrderStatus = "cancelled"
+	OrderStatusPaymentCapturedFulfilmentFailed OrderStatus = "payment_captured_fulfilment_failed"
 )
 
 type Order struct {
@@ -183,15 +184,22 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 		return nil, err
 	}
 
+	commitErrors := make([]error, 0, len(reservations))
 	for _, resID := range reservations {
 		if err := s.inventoryStore.Commit(ctx, resID); err != nil {
+			commitErrors = append(commitErrors, err)
 		}
+	}
+
+	orderStatus := OrderStatusPaid
+	if len(commitErrors) > 0 {
+		orderStatus = OrderStatusPaymentCapturedFulfilmentFailed
 	}
 
 	order := &Order{
 		ID:           fmt.Sprintf("ord_%d", time.Now().UnixNano()),
 		CartID:       cartID,
-		Status:       OrderStatusPaid,
+		Status:       orderStatus,
 		Total:        total.Value,
 		Currency:     total.Currency,
 		PaymentID:    chargeResult.ID,
@@ -217,15 +225,29 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 			s.outbox.Append(ctx, nil, createdEvent)
 		}
 
-		paidEvent, err := events.NewEvent(events.EventTypeOrderPaid, order.ID, map[string]interface{}{
-			"order_id":    order.ID,
-			"payment_id":  chargeResult.ID,
-			"total":       order.Total,
-			"currency":    order.Currency,
-			"captured_at": time.Now(),
-		})
-		if err == nil {
-			s.outbox.Append(ctx, nil, paidEvent)
+		if orderStatus == OrderStatusPaymentCapturedFulfilmentFailed {
+			fulfilmentFailedEvent, err := events.NewEvent(events.EventTypeOrderFulfilmentFailed, order.ID, map[string]interface{}{
+				"order_id":      order.ID,
+				"payment_id":    chargeResult.ID,
+				"total":         order.Total,
+				"currency":      order.Currency,
+				"commit_errors": len(commitErrors),
+				"failed_at":     time.Now(),
+			})
+			if err == nil {
+				s.outbox.Append(ctx, nil, fulfilmentFailedEvent)
+			}
+		} else {
+			paidEvent, err := events.NewEvent(events.EventTypeOrderPaid, order.ID, map[string]interface{}{
+				"order_id":    order.ID,
+				"payment_id":  chargeResult.ID,
+				"total":       order.Total,
+				"currency":    order.Currency,
+				"captured_at": time.Now(),
+			})
+			if err == nil {
+				s.outbox.Append(ctx, nil, paidEvent)
+			}
 		}
 	}
 

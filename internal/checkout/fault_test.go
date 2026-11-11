@@ -566,7 +566,7 @@ func TestInventoryCommitFailsAfterCapture_OperationFails(t *testing.T) {
 	inventoryStore := NewScriptableInventory(clock)
 	paymentProvider := payment.NewFakeProvider(payment.NoFailure)
 	idempotencyStore := NewIdempotencyStore()
-	eventOutbox := outbox.NewInMemoryOutbox()
+	spyOutbox := NewSpyOutbox()
 
 	inventoryStore.SetLevel("var001", "loc1", 10)
 
@@ -581,15 +581,15 @@ func TestInventoryCommitFailsAfterCapture_OperationFails(t *testing.T) {
 		return nil
 	})
 
-	svc := NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
+	svc := NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, spyOutbox)
 
 	order, err := svc.PlaceOrder("cart001", "idem-key-commit-fail")
 	if err != nil {
 		t.Fatalf("PlaceOrder error: %v", err)
 	}
 
-	if order.Status != OrderStatusPaid {
-		t.Errorf("Order status = %v, want %v", order.Status, OrderStatusPaid)
+	if order.Status != OrderStatusPaymentCapturedFulfilmentFailed {
+		t.Errorf("Order status = %v, want %v", order.Status, OrderStatusPaymentCapturedFulfilmentFailed)
 	}
 
 	if len(order.Reservations) != 1 {
@@ -603,6 +603,30 @@ func TestInventoryCommitFailsAfterCapture_OperationFails(t *testing.T) {
 
 	if levels[0].OnHand != 10 {
 		t.Errorf("OnHand = %d, want 10 (stock not decremented due to commit failure)", levels[0].OnHand)
+	}
+
+	appendedEvents := spyOutbox.Appended()
+	if len(appendedEvents) < 2 {
+		t.Errorf("Expected at least 2 events, got %d", len(appendedEvents))
+	}
+
+	orderCreatedFound := false
+	fulfilmentFailedFound := false
+	for _, e := range appendedEvents {
+		if e.Type == events.EventTypeOrderCreated {
+			orderCreatedFound = true
+		}
+		if e.Type == events.EventTypeOrderFulfilmentFailed {
+			fulfilmentFailedFound = true
+		}
+	}
+
+	if !orderCreatedFound {
+		t.Error("Expected OrderCreated event to be emitted")
+	}
+
+	if !fulfilmentFailedFound {
+		t.Error("Expected OrderFulfilmentFailed event to be emitted")
 	}
 }
 

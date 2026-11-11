@@ -33,12 +33,13 @@ const (
 )
 
 const (
-	EventTypeOrderCreated   = "order.created"
-	EventTypeOrderPaid      = "order.paid"
-	EventTypeOrderFulfilled = "order.fulfilled"
-	EventTypeOrderRefunded  = "order.refunded"
-	EventTypeStockReserved  = "stock.reserved"
-	EventTypeStockReleased  = "stock.released"
+	EventTypeOrderCreated          = "order.created"
+	EventTypeOrderPaid             = "order.paid"
+	EventTypeOrderFulfilled        = "order.fulfilled"
+	EventTypeOrderRefunded         = "order.refunded"
+	EventTypeOrderFulfilmentFailed = "order.fulfilment_failed"
+	EventTypeStockReserved         = "stock.reserved"
+	EventTypeStockReleased         = "stock.released"
 )
 
 type Tx interface{}
