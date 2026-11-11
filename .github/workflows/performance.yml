@@ -60,26 +60,28 @@ jobs:
 
       - name: Run performance test
         id: run-test
+        env:
+          SCENARIO: ${{ inputs.scenario }}
+          CONCURRENCY: ${{ inputs.concurrency }}
+          DURATION: ${{ inputs.duration }}
+          RPS: ${{ inputs.rps }}
         run: |
           ./loadapp \
-            -scenario ${{ inputs.scenario }} \
-            -c ${{ inputs.concurrency }} \
-            -d ${{ inputs.duration }}s \
-            -rps ${{ inputs.rps }} \
+            -scenario "$SCENARIO" \
+            -c "$CONCURRENCY" \
+            -d "$DURATION"s \
+            -rps "$RPS" \
             --json > results.json
 
           echo "result=$(cat results.json)" >> $GITHUB_OUTPUT
 
-          # Parse results
-          scenario=$(echo ${{ inputs.scenario }})
-          duration_seconds=${{ inputs.duration }}
-          error_rate=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .error_rate")
-          p99_latency=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .latencies.p99")
-          duration_ms=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .duration" | sed 's/s$//')
+          error_rate=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$SCENARIO\") | .error_rate")
+          p99_latency=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$SCENARIO\") | .latencies.p99")
+          duration_ms=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$SCENARIO\") | .duration" | sed 's/s$//')
 
           echo "error_rate=$error_rate" >> $GITHUB_OUTPUT
           echo "p99_latency=$p99_latency" >> $GITHUB_OUTPUT
-          echo "p99_ms=$(echo $p99_latency | sed 's/ms$//')" >> $GITHUB_OUTPUT
+          echo "p99_ms=$(echo "$p99_latency" | sed 's/ms$//')" >> $GITHUB_OUTPUT
           echo "passed=true" >> $GITHUB_OUTPUT
           echo "duration_ms=$duration_ms" >> $GITHUB_OUTPUT
         continue-on-error: true
@@ -118,14 +120,17 @@ jobs:
 
       - name: Run tests with budgets
         id: check-budgets
+        env:
+          SCENARIO: ${{ inputs.scenario }}
+          DURATION_SEC: ${{ inputs.duration }}
+          BUDGET_P99: ${{ steps.set-outputs.outputs.budget_p99 }}
+          RPS_LIMIT: ${{ steps.set-outputs.outputs.max_rps }}
         run: |
-          scenario="${{ inputs.scenario }}"
-          duration_sec=${{ inputs.duration }}
-          consumed_rps=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .throughput / ${duration_sec} | floor")
-          error_rate=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .error_rate")
-          p99_ms=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$scenario\") | .latencies.p99" | sed 's/ms$//')
-          budget_p99=$(echo "${{ steps.set-outputs.outputs.budget_p99 }}")
-          rps_limit=$(echo "${{ steps.set-outputs.outputs.max_rps }}")
+          consumed_rps=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$SCENARIO\") | .throughput / ${DURATION_SEC} | floor")
+          error_rate=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$SCENARIO\") | .error_rate")
+          p99_ms=$(cat results.json | jq -r ".scenarios[] | select(.name==\"$SCENARIO\") | .latencies.p99" | sed 's/ms$//')
+          budget_p99="$BUDGET_P99"
+          rps_limit="$RPS_LIMIT"
 
           echo "Consumed RPS: $consumed_rps"
           echo "Error rate: $error_rate"
@@ -133,7 +138,6 @@ jobs:
           echo "Budget p99: ${budget_p99}ms"
           echo "RPS limit: $rps_limit"
 
-          # Check requirements: error rate > 0.1% or p99 exceeds budget by 50%
           error_rate_passed=$(echo "scale=2; $error_rate < 0.1" | bc -l || echo 1)
           p99_margin=$(echo "scale=2; (${p99_ms} - ${budget_p99}) / ${budget_p99}" | bc -l || echo 0)
           p99_passed=$(echo "scale=2; $p99_margin <= 0.50" | bc -l || echo 1)
@@ -141,7 +145,6 @@ jobs:
           echo "error_rate_bit=$(echo "scale=2; $error_rate < 0.1" | bc -l || echo 1)" >> $GITHUB_OUTPUT
           echo "p99_passed=$(echo "scale=2; $p99_margin <= 0.50" | bc -l || echo 1)" >> $GITHUB_OUTPUT
 
-          # Overall check: fail if either condition fails
           if (( $(echo "$error_rate_passed == 0" | bc -l) )); then
             echo "❌ Error rate exceeded: $error_rate > 0.1%"
             exit 1
@@ -152,7 +155,6 @@ jobs:
             exit 1
           fi
 
-          # Check for > 30% throughput drop (requires baseline)
           echo "✓ All budget checks passed"
         continue-on-error: true
 
