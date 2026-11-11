@@ -177,6 +177,7 @@ func TestPostgresStore_ConcurrentSameKeyExactlyOneExecutes(t *testing.T) {
 
 	var successful int32
 	var wg sync.WaitGroup
+	errChan := make(chan error, 10)
 
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
@@ -187,7 +188,7 @@ func TestPostgresStore_ConcurrentSameKeyExactlyOneExecutes(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Errorf("Begin() error: %v", err)
+				errChan <- err
 				return
 			}
 			if replay {
@@ -200,6 +201,11 @@ func TestPostgresStore_ConcurrentSameKeyExactlyOneExecutes(t *testing.T) {
 	}
 
 	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		t.Errorf("Begin() error: %v", err)
+	}
 
 	if successful != 1 {
 		t.Errorf("Exactly one goroutine should succeed, got %d", successful)
