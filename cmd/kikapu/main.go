@@ -169,7 +169,6 @@ func main() {
 	}
 
 	eventOutbox := outbox.NewInMemoryOutbox()
-	_ = idempotencyStore
 	checkoutIdempotencyStore := checkout.NewIdempotencyStore()
 	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, checkoutIdempotencyStore, eventOutbox)
 
