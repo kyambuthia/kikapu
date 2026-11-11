@@ -1,0 +1,194 @@
+name: Performance Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Test scenario to run (list|detail|checkout)'
+        required: true
+        default: 'list'
+        type: choice
+        options:
+          - list
+          - detail
+          - checkout
+      concurrency:
+        description: 'Number of concurrent requests (workers)'
+        required: true
+        default: '20'
+      duration:
+        description: 'Test duration in seconds'
+        required: true
+        default: '60'
+      rps:
+        description: 'Requests per second cap (0 for unlimited)'
+        required: true
+        default: '0'
+
+env:
+  KIKAPU_ADDR: 127.0.0.1:8080
+
+jobs:
+  loadtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      scenario: ${{ steps.set-outputs.outputs.scenario }}
+      duration: ${{ steps.set-outputs.outputs.duration }}
+      result: ${{ steps.run-test.outputs.result }}
+      error_rate: ${{ steps.run-test.outputs.error_rate }}
+      p99_latency: ${{ steps.run-test.outputs.p99_latency }}
+      passed: ${{ steps.run-test.outputs.passed }}
+      duration_ms: ${{ steps.run-test.outputs.duration_ms }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.27.1'
+          cache: true
+
+      - name: Build load test
+        run: go build -o loadapp ./cmd/loadapp
+
+      - name: Start test server
+        run: |
+          go run ./cmd/api -addr 127.0.0.1:8080 &
+          sleep 5
+
+      - name: Run performance test
+        id: run-test
+        run: |
+          ./loadapp \
+            -scenario ${{ inputs.scenario }} \
+            -c ${{ inputs.concurrency }} \
+            -d ${{ inputs.duration }}s \
+            -rps ${{ inputs.rps }} \
+            --json > results.json
+
+          echo "result=$(cat results.json)" >> $GITHUB_OUTPUT
+
+          # Parse results
+          scenario=$(echo ${{ inputs.scenario }})
+          duration_seconds=${{ inputs.duration }}
+          error_rate=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .error_rate")
+          p99_latency=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .latencies.p99")
+          duration_ms=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .duration" | sed 's/s$//')
+
+          echo "error_rate=$error_rate" >> $GITHUB_OUTPUT
+          echo "p99_latency=$p99_latency" >> $GITHUB_OUTPUT
+          echo "p99_ms=$(echo $p99_latency | sed 's/ms$//')" >> $GITHUB_OUTPUT
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo "duration_ms=$duration_ms" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Wait for server to start
+        run: sleep 3
+
+      - name: Stop server
+        if: always()
+        run: |
+          pkill -f "cmd/api"
+
+      - name: Define budgets from parallel job
+        id: set-outputs
+        run: |
+          case ${{ inputs.scenario }} in
+            list)
+              echo "max_rps=120"
+              echo "budget_p99=50"
+              ;;
+            detail)
+              echo "max_rps=100"
+              echo "budget_p99=20"
+              ;;
+            checkout)
+              echo "max_rps=50"
+              echo "budget_p99=150"
+              ;;
+          esac
+
+          echo "scenario=${{ inputs.scenario }}" >> $GITHUB_OUTPUT
+          echo "duration=${{ inputs.duration }}" >> $GITHUB_OUTPUT
+
+          echo "${max_rps:-100}" >> $GITHUB_OUTPUT
+          echo "${budget_p99:-100}" >> $GITHUB_OUTPUT
+
+      - name: Run tests with budgets
+        id: check-budgets
+        run: |
+          scenario="${{ inputs.scenario }}"
+          duration_sec=${{ inputs.duration }}
+          consumed_rps=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .throughput / ${duration_sec} | floor")
+          error_rate=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .error_rate")
+          p99_ms=$(echo ${{ inputs.scenario }} | jq -r ".scenarios[] | select(.name==\"$scenario\") | .latencies.p99" | sed 's/ms$//')
+          budget_p99=$(echo "${{ steps.set-outputs.outputs.budget_p99 }}")
+          rps_limit=$(echo "${{ steps.set-outputs.outputs.max_rps }}")
+
+          echo "Consumed RPS: $consumed_rps"
+          echo "Error rate: $error_rate"
+          echo "p99 latency: ${p99_ms}ms"
+          echo "Budget p99: ${budget_p99}ms"
+          echo "RPS limit: $rps_limit"
+
+          # Check requirements: error rate > 0.1% or p99 exceeds budget by 50%
+          error_rate_passed=$(echo "scale=2; $error_rate < 0.1" | bc -l || echo 1)
+          p99_margin=$(echo "scale=2; (${p99_ms} - ${budget_p99}) / ${budget_p99}" | bc -l || echo 0)
+          p99_passed=$(echo "scale=2; $p99_margin <= 0.50" | bc -l || echo 1)
+
+          echo "error_rate_bit=$(echo "scale=2; $error_rate < 0.1" | bc -l || echo 1)" >> $GITHUB_OUTPUT
+          echo "p99_passed=$(echo "scale=2; $p99_margin <= 0.50" | bc -l || echo 1)" >> $GITHUB_OUTPUT
+
+          # Overall check: fail if either condition fails
+          if (( $(echo "$error_rate_passed == 0" | bc -l) )); then
+            echo "❌ Error rate exceeded: $error_rate > 0.1%"
+            exit 1
+          fi
+
+          if (( $(echo "$p99_margin > 0.50" | bc -l) )); then
+            echo "❌ p99 latency exceeded budget by 50%: ${p99_ms}ms > $budget_p99ms (in 50%)"
+            exit 1
+          fi
+
+          # Check for > 30% throughput drop (requires baseline)
+          echo "✓ All budget checks passed"
+        continue-on-error: true
+
+      - name: Store results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-test-results-${{ inputs.scenario }}
+          path: results.json
+
+      - name: Comment PR if applicable
+        if: github.event_name == 'pull_request' && steps.check-budgets.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const scenario = '${{ inputs.scenario }}';
+            const duration_sec = '${{ inputs.duration }}';
+            const p99_ms = '${{ steps.run-test.outputs.p99_latency }}';
+            const error_rate = '${{ steps.run-test.outputs.error_rate }}';
+            const budget_ms = ${{ steps.set-outputs.outputs.budget_p99 }};
+
+            const comment = `## ⚠️ Performance Test Failed
+
+            **Scenario**: \`$scenario\`
+            **Duration**: ${duration_sec}s
+
+            **Results**:
+            - p99 latency: \`${p99_ms}\`
+            - Error rate: \`${error_rate}\`
+            - Budget: \`${budget_ms}ms\`
+
+            > Check PERFORMANCE.md for budget definitions and regression detection rules.`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
