@@ -345,6 +345,9 @@ run_self_test() {
     test_migrations=$(mktemp -d)
     cat > "${test_migrations}/0003_test_idempotent.sql" <<-EOF
 		-- Test migration
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+		    version TEXT PRIMARY KEY
+		);
 		CREATE TABLE IF NOT EXISTS test_table (
 		    id UUID PRIMARY KEY DEFAULT gen_random_uuid()
 		);
