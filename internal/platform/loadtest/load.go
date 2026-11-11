@@ -99,8 +99,7 @@ func getEnv(k, v string) string {
 
 func run(ctx context.Context, scenario string, workers int, duration time.Duration, rpsCap int) []ScenarioResult {
 	var wg sync.WaitGroup
-	var results []ScenarioResult
-	var mu sync.Mutex
+	resultsChan := make(chan ScenarioResult, workers)
 
 	if workers <= 0 {
 		return nil
@@ -138,6 +137,7 @@ func run(ctx context.Context, scenario string, workers int, duration time.Durati
 						return
 					}
 					scenarioResult.endedAt = time.Now()
+					resultsChan <- scenarioResult
 					return
 				case <-ticker.C:
 					if requestCount < rpsCap {
@@ -152,11 +152,15 @@ func run(ctx context.Context, scenario string, workers int, duration time.Durati
 		}(i)
 	}
 
-	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
 
-	mu.Lock()
-	results = []ScenarioResult{createScenarioResult(scenario)}
-	mu.Unlock()
+	var results []ScenarioResult
+	for result := range resultsChan {
+		results = append(results, result)
+	}
 
 	return results
 }
