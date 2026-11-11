@@ -15,13 +15,13 @@ import (
 )
 
 type Config struct {
-	Addr       string
-	Scenario   string
+	Addr        string
+	Scenario    string
 	Concurrency int
-	Duration   time.Duration
-	RPSCap     int
-	startedAt  time.Time
-	endedAt    time.Time
+	Duration    time.Duration
+	RPSCap      int
+	startedAt   time.Time
+	endedAt     time.Time
 }
 
 func (c *Config) Validate() error {
@@ -49,13 +49,13 @@ func (c *Config) Validate() error {
 }
 
 var (
-	config  Config
+	config   Config
 	JSONFlag bool
 )
 
 func parseFlags() (*Config, error) {
 	cfg := &Config{
-		Addr:       getEnv("KIKAPU_ADDR", ":8080"),
+		Addr:        getEnv("KIKAPU_ADDR", ":8080"),
 		Concurrency: parseInt(getEnv("KIKAPU_CONCURRENCY", "20"), 20),
 		Duration:    parseDuration(getEnv("KIKAPU_DURATION", "10s")),
 		RPSCap:      parseInt(getEnv("KIKAPU_RPS_CAP", "0"), 0),
@@ -161,13 +161,13 @@ func run(ctx context.Context, scenario string, workers int, duration time.Durati
 }
 
 type ScenarioResult struct {
-	Name          string
-	BaseURL        string
-	Duration       string
-	ErrorCount     int
-	SuccessCount   int
-	Throughput     int
-	Concurrency    int
+	Name         string
+	BaseURL      string
+	Duration     string
+	ErrorCount   int
+	SuccessCount int
+	Throughput   int
+	Concurrency  int
 
 	Latencies struct {
 		P50 string
@@ -318,7 +318,7 @@ func calculatePercentiles(data []time.Duration, p float64) time.Duration {
 		return sorted[i] < sorted[j]
 	})
 
-	idx := int(float64(len(sorted)) * p) - 1
+	idx := int(float64(len(sorted))*p) - 1
 	if idx < 0 {
 		idx = 0
 	}
@@ -377,9 +377,9 @@ func saveJSON(results []ScenarioResult) error {
 	scenariosMap := map[string]interface{}{}
 	for _, result := range results {
 		scenariosMap[result.Name] = map[string]interface{}{
-			"name":      result.Name,
-			"base_url":  result.BaseURL,
-			"duration":  result.Duration,
+			"name":       result.Name,
+			"base_url":   result.BaseURL,
+			"duration":   result.Duration,
 			"throughput": result.Throughput,
 			"error_rate": computeSuccessRate(result.ErrorCount, result.Throughput),
 			"latencies": map[string]interface{}{
@@ -398,13 +398,12 @@ func saveJSON(results []ScenarioResult) error {
 }
 
 type Result struct {
-	Timestamp     string                  `json:"timestamp"`
-	Hostname      string                  `json:"hostname"`
-	MachineSpec    map[string]string      `json:"machine_spec"`
-	Scenarios     map[string]interface{}  `json:"scenarios"`
-	GoVersion     string                  `json:"go_version"`
+	Timestamp   string                 `json:"timestamp"`
+	Hostname    string                 `json:"hostname"`
+	MachineSpec map[string]string      `json:"machine_spec"`
+	Scenarios   map[string]interface{} `json:"scenarios"`
+	GoVersion   string                 `json:"go_version"`
 }
-
 
 func Run(cfg Config) int {
 	config = cfg
