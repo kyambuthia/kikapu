@@ -2,7 +2,6 @@ package obs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -21,60 +20,45 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.25.0"
 	otel_trace "go.opentelemetry.io/otel/trace"
-	"go.opentelemetry.io/otel/trace/noop"
 	"golang.org/x/exp/slog"
 )
 
-type logger struct {
+type Logger struct {
 	logger *slog.Logger
-	tracer Tracer
 }
 
-type Logger interface {
-	Info(msg string, args ...any)
-	Debug(msg string, args ...any)
-	Warn(msg string, args ...any)
-	Error(msg string, args ...any)
-	With(args ...any) Logger
-}
-
-func NewLogger(level slog.Level) *logger {
-	return &logger{
-		logger: slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: level,
-		})),
-		tracer: GetTracer(),
-	}
-}
-
-func (l *logger) Info(msg string, args ...any) {
+func (l *Logger) Info(msg string, args ...any) {
 	l.logger.Info(msg, args...)
 }
 
-func (l *logger) Debug(msg string, args ...any) {
+func (l *Logger) Debug(msg string, args ...any) {
 	l.logger.Debug(msg, args...)
 }
 
-func (l *logger) Warn(msg string, args ...any) {
+func (l *Logger) Warn(msg string, args ...any) {
 	l.logger.Warn(msg, args...)
 }
 
-func (l *logger) Error(msg string, args ...any) {
+func (l *Logger) Error(msg string, args ...any) {
 	l.logger.Error(msg, args...)
-	if stack := debug.Stack(); len(stack) > 0 {
-		l.Error("stacktrace", string(stack))
+}
+
+func (l *Logger) With(args ...any) *Logger {
+	return &Logger{
+		logger: l.logger.With(args...),
 	}
 }
 
-func (l *logger) With(args ...any) Logger {
-	return &logger{
-		logger: l.logger.With(args...),
-		tracer: l.tracer,
+func NewLogger(level slog.Level) *Logger {
+	return &Logger{
+		logger: slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: level,
+		})),
 	}
 }
 
 type Middleware struct {
-	logger    *logger
+	logger    *Logger
 	requestID string
 	metrics   *Metrics
 	tracer    otel_trace.Tracer
@@ -87,7 +71,7 @@ type Middleware struct {
 }
 
 type MiddlewareOptions struct {
-	Logger    *logger
+	Logger    *Logger
 	RequestID string
 }
 
@@ -96,7 +80,7 @@ func NewMiddleware(opts MiddlewareOptions) *Middleware {
 		logger:    opts.Logger,
 		requestID: opts.RequestID,
 		metrics:   NewMetrics(),
-		tracer:    GetTracer().(otel_trace.Tracer),
+		tracer:    GetTracer(),
 	}
 }
 
@@ -113,9 +97,9 @@ func (m *Middleware) Middleware(next http.Handler) http.Handler {
 
 		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
-		ctx, span := otel_trace.SpanFromContext(r.Context()).TracerProvider().Tracer("kikapu").Start(r.Context(), "http.request", otel_trace.WithAttributes(
-			otel_attrs.String("http.method", r.Method),
-			otel_attrs.String("http.url", r.URL.Path),
+		_, span := otel_trace.SpanFromContext(r.Context()).TracerProvider().Tracer("kikapu").Start(r.Context(), "http.request", otel_trace.WithAttributes(
+			attribute.String("http.method", r.Method),
+			attribute.String("http.url", r.URL.Path),
 		))
 		defer span.End()
 
@@ -201,9 +185,9 @@ func extractRoutePattern(path string) (string, error) {
 }
 
 type Metrics struct {
-	requestsTotal    *prometheus.CounterVec
-	requestDuration  *prometheus.HistogramVec
-	checkoutTotal    *prometheus.CounterVec
+	requestsTotal   *prometheus.CounterVec
+	requestDuration *prometheus.HistogramVec
+	checkoutTotal   *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -249,10 +233,6 @@ func (m *Metrics) Record(opts durationHistogramOpts) {
 	m.requestDuration.WithLabelValues(opts.route).Observe(opts.latency)
 }
 
-func (m *Metrics) RecordCheckout(result string) {
-	m.checkoutTotal.WithLabelValues(result).Inc()
-}
-
 type metricsHandler struct {
 	metrics *Metrics
 }
@@ -273,8 +253,9 @@ func initTracer() {
 		return
 	}
 
-	res := otel_attrs.NewResource(
-		otel_attrs.String("service.name", "kikapu"),
+	res := resource.NewWithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceNameKey.String("kikapu"),
 	)
 
 	otlpConn, err := otlptracegrpc.New(context.Background(),
