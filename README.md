@@ -253,8 +253,9 @@ EOF
 | GET | `/healthz` | Health check - returns `{"status":"ok"}` |
 | GET | `/readyz` | Readiness check - returns 200 |
 | GET | `/v1/version` | Version info - returns version and commit |
-| GET | `/v1/products` | List products with pagination |
+ | GET | `/v1/products` | List products with pagination |
  | GET | `/v1/products/{slug}` | Get a single product by slug |
+ | GET | `/v1/search` | Search products with full-text and typo tolerance |
  | GET | `/v1/regions` | List all regions |
  | GET | `/v1/channels` | List all sales channels |
  | POST | `/v1/carts` | Create a new cart |
@@ -638,13 +639,109 @@ curl -X GET "http://localhost:8080/v1/admin/products?status=published&limit=20" 
   -H "Authorization: Bearer kik_admin_key"
 ```
 
-Query parameters:
+ Query parameters:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `status` | string | Filter by status: `draft`, `published`, or `archived` |
 | `limit` | integer | Max results (1-100, default: 20) |
 | `cursor` | string | Pagination cursor from previous response |
+
+## Product Search
+
+Kikapu provides full-text product search using PostgreSQL's built-in search capabilities with trigram-based typo tolerance.
+
+### Endpoint
+
+```
+GET /v1/search?q=<query>&limit=<n>&cursor=<cursor>&status=<status>
+```
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `q` | string | Yes | Search query (required) |
+| `limit` | integer | No | Max results (1-100, default: 20) |
+| `cursor` | string | No | Pagination cursor from previous response |
+| `status` | string | No | Filter by status: `draft`, `published`, or `archived` |
+
+### Search Features
+
+1. **Full-Text Search**: Uses PostgreSQL `websearch_to_tsquery` for natural language queries
+2. **Typo Tolerance**: Trigram-based fuzzy matching with similarity threshold > 0.3
+3. **Ranked Results**: Results ordered by relevance using `ts_rank_cd`
+4. **Weighted Search**: 
+   - Product name (weight A - highest priority)
+   - Product slug (weight B - medium priority)
+   - Variant SKUs (weight C - lower priority)
+
+### Example Requests
+
+Basic search:
+```bash
+curl -X GET "http://localhost:8080/v1/search?q=organic+cotton"
+```
+
+Search with pagination:
+```bash
+curl -X GET "http://localhost:8080/v1/search?q=cotton&limit=10&cursor=eyJyYW5rIjowLjg1LCJpZCI6InByb2RfMTIzIn0="
+```
+
+Search with status filter:
+```bash
+curl -X GET "http://localhost:8080/v1/search?q=keyboard&status=published"
+```
+
+### Example Response
+
+```json
+{
+  "data": [
+    {
+      "id": "prod_abc123...",
+      "slug": "organic-cotton-tshirt",
+      "name": "Organic Cotton T-Shirt",
+      "status": "published",
+      "rank": 0.85,
+      "variants": [
+        {
+          "id": "var_001",
+          "sku": "OCT-SMZ-US",
+          "price": {"Value": 2999, "Currency": "USD"},
+          "currency": "USD"
+        }
+      ]
+    }
+  ],
+  "next_cursor": "eyJyYW5rIjowLjc4LCJpZCI6InByb2RfZGVmNDU2In0="
+}
+```
+
+### Ranking Rules
+
+Results are ranked by:
+
+1. **Full-text search score** (`ts_rank_cd`): Higher scores indicate better match to query terms
+2. **Weight priority**: Matches in product name rank higher than matches in slug or SKU
+3. **Fallback similarity**: If FTS returns no results, trigram similarity search provides typo-tolerant matching
+
+### Typo Tolerance
+
+The search handles common typos using PostgreSQL's `pg_trgm` extension:
+
+- Search for "coton" finds "cotton" products
+- Search for "sockomoko" finds "sokomoko" products  
+- Similarity threshold: > 0.3
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 400 | `validation_error` | Missing or invalid `q` parameter |
+| 400 | `invalid_limit` | Limit must be between 1 and 100 |
+| 400 | `invalid_cursor` | Invalid pagination cursor |
+
 
 Response:
 ```json

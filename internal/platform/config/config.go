@@ -61,7 +61,7 @@ func (c *Config) Validate() error {
 	}
 
 	if c.Mode != "api" && c.Mode != "worker" {
-		return errors.New("mode must be \'api\' or \'worker\'")
+		return errors.New("mode must be 'api' or 'worker'")
 	}
 
 	validLevels := map[string]bool{
@@ -75,7 +75,7 @@ func (c *Config) Validate() error {
 	}
 
 	if c.PaymentProvider != "fake" && c.PaymentProvider != "paystack" && c.PaymentProvider != "mpesa" {
-		return errors.New("payment provider must be \'fake\', \'paystack\', or \'mpesa\'")
+		return errors.New("payment provider must be 'fake', 'paystack', or 'mpesa'")
 	}
 
 	validLimits := []int{10, 120, 300}

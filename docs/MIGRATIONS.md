@@ -201,6 +201,37 @@ CHECK (status IS NOT NULL) NOT VALID;
 INSERT INTO schema_migrations (version) VALUES ('0004');
 ```
 
+### Adding Full-Text Search
+
+```sql
+-- Add full-text search support for products
+-- Why: Enable fast, ranked product search without external search engine
+-- Reversible: yes
+
+-- Enable pg_trgm extension for typo tolerance
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- Add search tsvector column to products
+ALTER TABLE products ADD COLUMN search tsvector;
+
+-- Create GIN index on search column for fast full-text queries
+CREATE INDEX idx_products_search ON products USING GIN(search);
+
+-- Create GIN trigram index on name for typo tolerance
+CREATE INDEX idx_products_name_trgm ON products USING GIN(name gin_trgm_ops);
+
+-- Function and triggers to keep search column updated
+-- See migrations/0004_search.sql for complete implementation
+
+INSERT INTO schema_migrations (version) VALUES ('0004');
+```
+
+**Note**: The full-text search migration (0004) includes:
+- Weighted tsvector column (name weight A, slug weight B, variant SKUs weight C)
+- GIN index for fast FTS queries
+- Trigram index for typo tolerance
+- Auto-update triggers for products and variants
+
 ### Dropping a Column (With Approval)
 
 ```sql

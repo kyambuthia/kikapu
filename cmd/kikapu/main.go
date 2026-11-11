@@ -28,6 +28,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
 	"github.com/kyambuthia/kikapu/internal/routes"
+	"github.com/kyambuthia/kikapu/internal/search"
 	"github.com/kyambuthia/kikapu/internal/worker"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -130,6 +131,12 @@ func main() {
 	repo := catalog.NewInMemoryRepository(products)
 	catalogHandler := routes.NewCatalogHandler(repo)
 
+	var searchHandler *routes.SearchHandler
+	if db != nil {
+		searchStore := search.NewPostgresStore(db)
+		searchHandler = routes.NewSearchHandler(searchStore)
+	}
+
 	cartStore := cart.NewInMemoryStore()
 	inventoryStore := inventory.NewMemoryStore(nil)
 
@@ -200,6 +207,9 @@ func main() {
 
 	catalogHandler.RegisterRoutes(mux)
 	cartHandler.RegisterRoutes(mux)
+	if searchHandler != nil {
+		searchHandler.RegisterRoutes(mux)
+	}
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
