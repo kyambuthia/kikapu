@@ -249,3 +249,18 @@ func (s *PostgresStore) UpdateStatus(ctx context.Context, id string, status Stat
 
 	return nil
 }
+
+func (s *PostgresStore) UpdateFulfillmentStatus(ctx context.Context, id string, status string, updatedAt time.Time) error {
+	query := `
+		UPDATE orders
+		SET fulfillment_status = $1, status = $2, updated_at = $3
+		WHERE id = $4
+	`
+
+	_, err := s.db.ExecContext(ctx, query, status, StatusFulfilled, updatedAt, id)
+	if err != nil {
+		return fmt.Errorf("order: update fulfillment status: %w", err)
+	}
+
+	return nil
+}

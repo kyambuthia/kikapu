@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/kyambuthia/kikapu/internal/events"
 )
 
 type mockRepo struct {
@@ -67,6 +69,34 @@ func (m *mockOrderFetcher) Get(ctx context.Context, id string) (*OrderInfo, erro
 		return nil, m.err
 	}
 	return m.order, nil
+}
+
+type mockOrderStore struct {
+	updateErr error
+	updatedID string
+	updated   bool
+}
+
+func (m *mockOrderStore) UpdateFulfillmentStatus(ctx context.Context, orderID string, status string, updatedAt time.Time) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	m.updatedID = orderID
+	m.updated = true
+	return nil
+}
+
+type mockOutbox struct {
+	events []events.Event
+	err    error
+}
+
+func (m *mockOutbox) Append(ctx context.Context, tx interface{}, e events.Event) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.events = append(m.events, e)
+	return nil
 }
 
 func TestCreateFulfillment(t *testing.T) {
@@ -411,4 +441,155 @@ func TestListByOrder(t *testing.T) {
 			t.Errorf("ListByOrder() count = %d, want 0", len(fulfillments))
 		}
 	})
+}
+
+func TestTransitionStatus_EmitsEventOnAllShipped(t *testing.T) {
+	tests := []struct {
+		name           string
+		order          *OrderInfo
+		existing       []Fulfillment
+		fulfillmentID  string
+		toStatus       Status
+		wantEvent      bool
+		wantOrderState string
+	}{
+		{
+			name: "all items shipped emits event",
+			order: &OrderInfo{
+				ID:     "ord-001",
+				Status: "confirmed",
+				Lines: []OrderLine{
+					{VariantID: "var-001", Quantity: 5},
+				},
+			},
+			existing: []Fulfillment{},
+			fulfillmentID: "ful-001",
+			toStatus: StatusShipped,
+			wantEvent: true,
+			wantOrderState: "fulfilled",
+		},
+		{
+			name: "partial shipment no event",
+			order: &OrderInfo{
+				ID:     "ord-001",
+				Status: "confirmed",
+				Lines: []OrderLine{
+					{VariantID: "var-001", Quantity: 10},
+				},
+			},
+			existing: []Fulfillment{},
+			fulfillmentID: "ful-001",
+			toStatus: StatusShipped,
+			wantEvent: false,
+			wantOrderState: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockRepo{
+				fulfillments: make(map[string]*Fulfillment),
+			}
+			for i := range tt.existing {
+				repo.fulfillments[tt.existing[i].ID] = &tt.existing[i]
+			}
+
+			ful := &Fulfillment{
+				ID:        tt.fulfillmentID,
+				OrderID:   tt.order.ID,
+				Status:    StatusPacked,
+				Items:     []Item{{VariantID: "var-001", Quantity: 5}},
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+			repo.fulfillments[tt.fulfillmentID] = ful
+
+			orderFetcher := &mockOrderFetcher{order: tt.order}
+			orderStore := &mockOrderStore{}
+			outbox := &mockOutbox{}
+
+			svc := NewService(repo, orderFetcher)
+			svc.SetOrderStore(orderStore)
+			svc.SetOutbox(outbox)
+
+			ctx := context.Background()
+			err := svc.TransitionStatus(ctx, tt.fulfillmentID, tt.toStatus)
+
+			if err != nil {
+				t.Errorf("TransitionStatus() error = %v", err)
+			}
+
+			if tt.wantEvent {
+				if len(outbox.events) == 0 {
+					t.Errorf("expected event to be emitted")
+				}
+				if outbox.events[0].Type != events.EventTypeOrderFulfilled {
+					t.Errorf("event type = %v, want %v", outbox.events[0].Type, events.EventTypeOrderFulfilled)
+				}
+				if !orderStore.updated {
+					t.Errorf("expected order fulfillment status to be updated")
+				}
+			} else {
+				if len(outbox.events) > 0 {
+					t.Errorf("did not expect event, got %d", len(outbox.events))
+				}
+			}
+		})
+	}
+}
+
+func TestTransitionStatus_PartialThenRemainder(t *testing.T) {
+	order := &OrderInfo{
+		ID:     "ord-001",
+		Status: "confirmed",
+		Lines: []OrderLine{
+			{VariantID: "var-001", Quantity: 5},
+		},
+	}
+
+	orderFetcher := &mockOrderFetcher{order: order}
+	orderStore := &mockOrderStore{}
+	outbox := &mockOutbox{}
+
+	repo := &mockRepo{
+		fulfillments: map[string]*Fulfillment{
+			"ful-001": {
+				ID:        "ful-001",
+				OrderID:   "ord-001",
+				Status:    StatusShipped,
+				Items:     []Item{{VariantID: "var-001", Quantity: 3}},
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			},
+			"ful-002": {
+				ID:        "ful-002",
+				OrderID:   "ord-001",
+				Status:    StatusPacked,
+				Items:     []Item{{VariantID: "var-001", Quantity: 2}},
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			},
+		},
+	}
+
+	svc := NewService(repo, orderFetcher)
+	svc.SetOrderStore(orderStore)
+	svc.SetOutbox(outbox)
+
+	ctx := context.Background()
+
+	err := svc.TransitionStatus(ctx, "ful-002", StatusShipped)
+	if err != nil {
+		t.Errorf("TransitionStatus() error = %v", err)
+	}
+
+	if len(outbox.events) == 0 {
+		t.Errorf("expected event to be emitted when all items shipped")
+	}
+	if outbox.events[0].Type != events.EventTypeOrderFulfilled {
+		t.Errorf("event type = %v, want %v", outbox.events[0].Type, events.EventTypeOrderFulfilled)
+	}
+	if !orderStore.updated {
+		t.Errorf("expected order fulfillment status to be updated")
+	}
 }

@@ -189,11 +189,23 @@ EOF
  | DELETE | `/v1/carts/{id}/items/{variantID}` | Remove item from cart |
   | POST | `/v1/checkout` | Place an order (requires Idempotency-Key header) |
   | POST | `/v1/webhooks/paystack` | Paystack webhook endpoint |
- | GET | `/v1/orders/{id}` | Get order details |
- | POST | `/v1/orders/{id}/refund` | Refund order (requires `Idempotency-Key`) |
- | POST | `/v1/admin/keys` | Create API key (admin only) |
- | GET | `/v1/admin/keys` | List API keys (admin only) |
- | DELETE | `/v1/admin/keys/{id}` | Revoke API key (admin only) |
+  | GET | `/v1/orders/{id}` | Get order details |
+  | POST | `/v1/orders/{id}/refund` | Refund order (requires `Idempotency-Key`) |
+  | POST | `/v1/admin/keys` | Create API key (admin only) |
+  | GET | `/v1/admin/keys` | List API keys (admin only) |
+  | DELETE | `/v1/admin/keys/{id}` | Revoke API key (admin only) |
+  | GET | `/v1/admin/products` | List products (admin only) |
+  | POST | `/v1/admin/products` | Create product (admin only) |
+  | GET | `/v1/admin/products/{id}` | Get product (admin only) |
+  | PATCH | `/v1/admin/products/{id}` | Update product (admin only) |
+  | DELETE | `/v1/admin/products/{id}` | Delete product (admin only) |
+  | PUT | `/v1/admin/products/{id}/stock` | Update stock level (admin only) |
+  | GET | `/v1/admin/orders` | List orders (admin only) |
+  | GET | `/v1/admin/orders/{id}` | Get order (admin only) |
+  | POST | `/v1/admin/orders/{id}/fulfillments` | Create fulfillment (admin only) |
+  | GET | `/v1/admin/fulfillments/{id}` | Get fulfillment (admin only) |
+  | PATCH | `/v1/admin/fulfillments/{id}` | Update fulfillment status (admin only) |
+  | POST | `/v1/admin/fulfillments/{id}/tracking` | Add tracking info (admin only) |
 
 ## API Key Authentication
 
@@ -808,6 +820,104 @@ Response:
   "created_at": "2024-01-15T10:30:00Z"
 }
 ```
+
+## Order Fulfillment
+
+Fulfillment handles the physical delivery of orders. Multiple fulfillments can be created per order for partial shipments.
+
+### Fulfillment Status Transitions
+
+| from | to | allowed |
+|---|---|---|
+| pending | picked, cancelled | yes |
+| picked | packed, cancelled | yes |
+| packed | shipped, cancelled | yes |
+| shipped | delivered | yes |
+| delivered | — | terminal |
+| cancelled | — | terminal |
+
+### Partial Fulfillment
+
+- Multiple fulfillments per order are allowed
+- Sum of fulfilled items must not exceed ordered quantity
+- When all items are shipped, order status becomes `fulfilled`
+- Event `order.fulfilled` is emitted on completion
+
+### Fulfillment API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/v1/admin/orders/{id}/fulfillments` | Create fulfillment (requires `Idempotency-Key`) |
+| GET | `/v1/admin/fulfillments/{id}` | Get fulfillment details |
+| PATCH | `/v1/admin/fulfillments/{id}` | Update fulfillment status |
+| POST | `/v1/admin/fulfillments/{id}/tracking` | Add tracking info |
+
+#### Create Fulfillment Example
+
+```bash
+curl -X POST http://localhost:8080/v1/admin/orders/ord-001/fulfillments \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -H "Idempotency-Key: unique-fulfillment-key-123" \
+  -d '{
+    "items": [
+      {"variant_id": "var-001", "quantity": 3}
+    ]
+  }'
+```
+
+Response (201 Created):
+```json
+{
+  "id": "ful-abc123",
+  "order_id": "ord-001",
+  "status": "pending",
+  "items": [
+    {"variant_id": "var-001", "quantity": 3}
+  ],
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-15T10:30:00Z"
+}
+```
+
+#### Update Status Example
+
+```bash
+curl -X PATCH http://localhost:8080/v1/admin/fulfillments/ful-abc123 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{"status": "shipped"}'
+```
+
+#### Add Tracking Example
+
+```bash
+curl -X POST http://localhost:8080/v1/admin/fulfillments/ful-abc123/tracking \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kik_admin_key" \
+  -d '{
+    "carrier": "DHL",
+    "number": "1234567890",
+    "url": "https://track.dhl.com/1234567890"
+  }'
+```
+
+### Tracking URL Validation
+
+- Tracking URLs must use HTTPS protocol
+- Empty URLs are rejected
+- Invalid URLs (http://, ftp://) are rejected with error
+
+### Error Responses
+
+| Status | Code | Description |
+|--------|------|-------------|
+| 400 | `order_not_confirmed` | Order must be confirmed before fulfillment |
+| 400 | `over_fulfillment` | Fulfillment items exceed ordered quantity |
+| 400 | `invalid_transition` | Invalid status transition |
+| 400 | `invalid_tracking_url` | Tracking URL must be HTTPS |
+| 404 | `order_not_found` | Order not found |
+| 404 | `fulfillment_not_found` | Fulfillment not found |
 
 ## Shipping Zones & Rates
 
