@@ -106,7 +106,8 @@ type ChargeResult struct {
 	AuthorizationURL string
 }
 
-func (c *Client) Charge(ctx context.Context, req payment.ChargeRequest) (payment.ChargeResult, error) {
+func (c *Client) Charge(req payment.ChargeRequest) (payment.ChargeResult, error) {
+	ctx := context.Background()
 	initReq := initializeRequest{
 		Email:     req.CustomerID,
 		Amount:    req.Amount.Value,
@@ -159,7 +160,8 @@ func (c *Client) Charge(ctx context.Context, req payment.ChargeRequest) (payment
 	}, nil
 }
 
-func (c *Client) Verify(ctx context.Context, reference string) (payment.ChargeResult, error) {
+func (c *Client) Verify(reference string) (payment.ChargeResult, error) {
+	ctx := context.Background()
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/transaction/verify/"+reference, nil)
 	if err != nil {
 		return payment.ChargeResult{}, fmt.Errorf("failed to create request: %w", err)

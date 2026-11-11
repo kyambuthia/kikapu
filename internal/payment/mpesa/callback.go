@@ -31,10 +31,10 @@ type CallbackItem struct {
 }
 
 type STKCallback struct {
-	MerchantRequestID string          `json:"MerchantRequestID"`
-	CheckoutRequestID string          `json:"CheckoutRequestID"`
-	ResultCode        int             `json:"ResultCode"`
-	ResultDesc        string          `json:"ResultDesc"`
+	MerchantRequestID string            `json:"MerchantRequestID"`
+	CheckoutRequestID string            `json:"CheckoutRequestID"`
+	ResultCode        int               `json:"ResultCode"`
+	ResultDesc        string            `json:"ResultDesc"`
 	CallbackMetadata  *CallbackMetadata `json:"CallbackMetadata"`
 }
 
@@ -48,12 +48,12 @@ type ProcessedCallback struct {
 	CheckoutRequestID string
 	MerchantRequestID string
 	ResultCode        int
-	ResultDesc       string
-	Amount           int64
-	MpesaReceipt     string
-	PhoneNumber      string
-	TransactionDate  int64
-	State            payment.State
+	ResultDesc        string
+	Amount            int64
+	MpesaReceipt      string
+	PhoneNumber       string
+	TransactionDate   int64
+	State             payment.State
 }
 
 type CallbackStore interface {
@@ -218,8 +218,8 @@ func (h *CallbackHandler) processCallback(cb *STKCallback, requestID string) (*P
 		CheckoutRequestID: cb.CheckoutRequestID,
 		MerchantRequestID: cb.MerchantRequestID,
 		ResultCode:        cb.ResultCode,
-		ResultDesc:       cb.ResultDesc,
-		State:            mapResultCodeFromInt(cb.ResultCode),
+		ResultDesc:        cb.ResultDesc,
+		State:             mapResultCodeFromInt(cb.ResultCode),
 	}
 
 	if cb.CallbackMetadata != nil {

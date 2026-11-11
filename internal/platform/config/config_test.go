@@ -69,7 +69,25 @@ func TestLoad(t *testing.T) {
 			cleanup: func() {
 				os.Unsetenv("PAYMENT_PROVIDER")
 			},
-			wantErr: errors.New("payment provider must be 'fake' or 'paystack'"),
+			wantErr: errors.New("payment provider must be 'fake', 'paystack', or 'mpesa'"),
+		},
+		{
+			name: "mpesa provider",
+			setup: func() {
+				os.Setenv("PAYMENT_PROVIDER", "mpesa")
+				os.Setenv("MPESA_CONSUMER_KEY", "key")
+				os.Setenv("MPESA_CONSUMER_SECRET", "secret")
+				os.Setenv("MPESA_SHORT_CODE", "174379")
+				os.Setenv("MPESA_PASSKEY", "passkey")
+			},
+			cleanup: func() {
+				os.Unsetenv("PAYMENT_PROVIDER")
+				os.Unsetenv("MPESA_CONSUMER_KEY")
+				os.Unsetenv("MPESA_CONSUMER_SECRET")
+				os.Unsetenv("MPESA_SHORT_CODE")
+				os.Unsetenv("MPESA_PASSKEY")
+			},
+			wantErr: nil,
 		},
 	}
 
@@ -171,7 +189,17 @@ func TestConfigValidate(t *testing.T) {
 				LogLevel:        "info",
 				PaymentProvider: "stripe",
 			},
-			wantErr: errors.New("payment provider must be 'fake' or 'paystack'"),
+			wantErr: errors.New("payment provider must be 'fake', 'paystack', or 'mpesa'"),
+		},
+		{
+			name: "mpesa provider valid",
+			config: &Config{
+				Addr:            ":8080",
+				Mode:            "api",
+				LogLevel:        "info",
+				PaymentProvider: "mpesa",
+			},
+			wantErr: nil,
 		},
 	}
 

@@ -34,13 +34,13 @@ var (
 )
 
 type Config struct {
-	BaseURL       string
-	ConsumerKey   string
+	BaseURL        string
+	ConsumerKey    string
 	ConsumerSecret string
-	ShortCode     string
-	Passkey       string
-	CallbackURL   string
-	HTTPClient    *http.Client
+	ShortCode      string
+	Passkey        string
+	CallbackURL    string
+	HTTPClient     *http.Client
 }
 
 type Client struct {
@@ -52,9 +52,9 @@ type Client struct {
 	callbackURL    string
 	httpClient     *http.Client
 
-	tokenMu       sync.RWMutex
-	accessToken   string
-	tokenExpiry   time.Time
+	tokenMu     sync.RWMutex
+	accessToken string
+	tokenExpiry time.Time
 }
 
 func New(cfg Config) (*Client, error) {
@@ -179,11 +179,12 @@ type stkPushResponse struct {
 }
 
 type stkPushError struct {
-	ErrorCode        string `json:"errorCode"`
-	ErrorMessage     string `json:"errorMessage"`
+	ErrorCode    string `json:"errorCode"`
+	ErrorMessage string `json:"errorMessage"`
 }
 
-func (c *Client) Charge(ctx context.Context, req payment.ChargeRequest) (payment.ChargeResult, error) {
+func (c *Client) Charge(req payment.ChargeRequest) (payment.ChargeResult, error) {
+	ctx := context.Background()
 	phone := normalizePhone(req.CustomerID)
 	timestamp := formatTimestamp(time.Now())
 	password := generatePassword(c.shortCode, c.passkey, timestamp)
@@ -293,15 +294,16 @@ type stkQueryRequest struct {
 }
 
 type stkQueryResponse struct {
-	ResponseCode           string `json:"ResponseCode"`
-	ResponseDescription    string `json:"ResponseDescription"`
-	MerchantRequestID      string `json:"MerchantRequestID"`
-	CheckoutRequestID      string `json:"CheckoutRequestID"`
-	ResultCode             string `json:"ResultCode"`
-	ResultDesc             string `json:"ResultDesc"`
+	ResponseCode        string `json:"ResponseCode"`
+	ResponseDescription string `json:"ResponseDescription"`
+	MerchantRequestID   string `json:"MerchantRequestID"`
+	CheckoutRequestID   string `json:"CheckoutRequestID"`
+	ResultCode          string `json:"ResultCode"`
+	ResultDesc          string `json:"ResultDesc"`
 }
 
-func (c *Client) Verify(ctx context.Context, checkoutRequestID string) (payment.ChargeResult, error) {
+func (c *Client) Verify(reference string) (payment.ChargeResult, error) {
+	ctx := context.Background()
 	timestamp := formatTimestamp(time.Now())
 	password := generatePassword(c.shortCode, c.passkey, timestamp)
 
@@ -309,7 +311,7 @@ func (c *Client) Verify(ctx context.Context, checkoutRequestID string) (payment.
 		BusinessShortCode: c.shortCode,
 		Password:          password,
 		Timestamp:         timestamp,
-		CheckoutRequestID: checkoutRequestID,
+		CheckoutRequestID: reference,
 	}
 
 	body, err := json.Marshal(queryReq)
@@ -383,7 +385,7 @@ func (c *Client) Verify(ctx context.Context, checkoutRequestID string) (payment.
 	state := mapResultCode(queryResp.ResultCode)
 
 	return payment.ChargeResult{
-		ID:      checkoutRequestID,
+		ID:      reference,
 		Status:  state,
 		Message: queryResp.ResultDesc,
 	}, nil
