@@ -68,8 +68,8 @@ func usage() {
 
 func run() {
 	cfg := loadtest.Config{
-		Addr:       getEnv("KIKAPU_ADDR", ":8080"),
-		Scenario:   parseScenario(scenario),
+		Addr:        getEnv("KIKAPU_ADDR", ":8080"),
+		Scenario:    parseScenario(scenario),
 		Concurrency: concurrency,
 		Duration:    duration,
 		RPSCap:      rpsCap,

@@ -51,8 +51,8 @@ func TestWaitGroupCounter(t *testing.T) {
 
 func TestCreateScenarioResult(t *testing.T) {
 	tests := []struct {
-		scenario  string
-		wantName  string
+		scenario string
+		wantName string
 	}{
 		{"list", "catalog list"},
 		{"detail", "product detail"},
@@ -77,4 +77,3 @@ func TestHTTPClientTimeoutValue(t *testing.T) {
 		t.Errorf("HTTP timeout should be fixed at 30s, not based on test duration")
 	}
 }
-
