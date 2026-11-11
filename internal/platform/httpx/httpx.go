@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"time"
 )
@@ -30,6 +31,15 @@ func WriteJSON(w http.ResponseWriter, status int, data interface{}) error {
 	}
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(data)
+}
+
+func ReadJSON(r *http.Request, dst interface{}) error {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	defer r.Body.Close()
+	return json.Unmarshal(body, dst)
 }
 
 func WriteError(w http.ResponseWriter, status int, code, message, requestID string) error {
