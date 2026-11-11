@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -106,10 +107,11 @@ func Middleware(store Store) func(http.Handler) http.Handler {
 
 			rc := &ResponseCapture{ResponseWriter: w, statusCode: http.StatusOK}
 
-			next.ServeHTTP(rc, r)
+		next.ServeHTTP(rc, r)
 
-			if err := store.Finish(r.Context(), key, rc.statusCode, rc.body); err != nil && err != ErrNotFound {
-			}
+		if err := store.Finish(r.Context(), key, rc.statusCode, rc.body); err != nil && err != ErrNotFound {
+			slog.Error("idempotency: finish failed", "error", err, "key", key)
+		}
 		})
 	}
 }
