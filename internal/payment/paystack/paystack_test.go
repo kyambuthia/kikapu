@@ -2,7 +2,6 @@ package paystack
 
 import (
 	"bytes"
-	"context"
 	"crypto/hmac"
 	"crypto/sha512"
 	"encoding/hex"
@@ -170,10 +169,7 @@ func TestCharge(t *testing.T) {
 				t.Fatalf("Failed to create client: %v", err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-			defer cancel()
-
-			result, err := client.Charge(ctx, payment.ChargeRequest{
+			result, err := client.Charge(payment.ChargeRequest{
 				IDempotencyKey: "test_key",
 				Amount:         money.Amount{Value: 10000, Currency: "KES"},
 				CustomerID:     "test@example.com",
@@ -339,10 +335,7 @@ func TestVerify(t *testing.T) {
 				t.Fatalf("Failed to create client: %v", err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-			defer cancel()
-
-			result, err := client.Verify(ctx, tt.reference)
+			result, err := client.Verify(tt.reference)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Verify() error = %v, wantErr %v", err, tt.wantErr)
