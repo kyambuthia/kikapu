@@ -112,11 +112,18 @@ func (s *IdempotencyStore) GetOrder(id string) (*Order, error) {
 	return &orderCopy, nil
 }
 
+// OrderStore persists checkout orders and idempotency key mappings.
+type OrderStore interface {
+	GetOrderForKey(key string) (*Order, bool)
+	SaveOrder(key string, order *Order) error
+	GetOrder(id string) (*Order, error)
+}
+
 type Service struct {
 	cartStore       cart.Store
 	inventoryStore  inventory.Store
 	paymentProvider payment.Provider
-	idempotency     *IdempotencyStore
+	idempotency     OrderStore
 	outbox          events.Outbox
 	reservationTTL  time.Duration
 }
@@ -125,7 +132,7 @@ func NewService(
 	cartStore cart.Store,
 	inventoryStore inventory.Store,
 	paymentProvider payment.Provider,
-	idempotencyStore *IdempotencyStore,
+	idempotencyStore OrderStore,
 	outbox events.Outbox,
 ) *Service {
 	return &Service{
