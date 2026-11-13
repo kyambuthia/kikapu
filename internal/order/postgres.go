@@ -28,7 +28,7 @@ func (s *PostgresStore) Get(ctx context.Context, id string) (*Order, error) {
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&o.ID, &o.Number, &o.RegionID, &o.Status, &o.PaymentStatus, &o.FulfillmentStatus,
 		&o.Totals.Subtotal.Value, &o.Totals.Discount.Value, &o.Totals.Tax.Value, &o.Totals.GrandTotal.Value,
-		currency, &o.CreatedAt, &o.UpdatedAt,
+		&currency, &o.CreatedAt, &o.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrOrderNotFound
@@ -149,7 +149,7 @@ func (s *PostgresStore) getLines(ctx context.Context, orderID string) ([]Line, e
 		var currency string
 		if err := rows.Scan(
 			&l.VariantID, &l.SKU, &l.Quantity,
-			&l.UnitPrice.Value, &l.Discount.Value, &l.Tax.Value, currency,
+			&l.UnitPrice.Value, &l.Discount.Value, &l.Tax.Value, &currency,
 		); err != nil {
 			return nil, fmt.Errorf("scan line: %w", err)
 		}
@@ -185,7 +185,7 @@ func (s *PostgresStore) getRefunds(ctx context.Context, orderID string) ([]Refun
 	for rows.Next() {
 		var r Refund
 		var currency string
-		if err := rows.Scan(&r.ID, &r.Amount.Value, currency, &r.Reason, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Amount.Value, &currency, &r.Reason, &r.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan refund: %w", err)
 		}
 		r.Amount.Currency = currency
