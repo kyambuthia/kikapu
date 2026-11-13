@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kyambuthia/kikapu/internal/admin"
@@ -11,6 +13,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/channel"
 	"github.com/kyambuthia/kikapu/internal/checkout"
+	"github.com/kyambuthia/kikapu/internal/idempotency"
 	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/outbox"
 	"github.com/kyambuthia/kikapu/internal/payment"
@@ -85,5 +88,69 @@ func TestBuildAPIMux_CoreEndpoints(t *testing.T) {
 				t.Fatalf("%s %s status = %d, want %d (body: %s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
 			}
 		})
+	}
+}
+
+type stubIdempotencyStore struct {
+	records map[string]idempotency.Record
+}
+
+func (s *stubIdempotencyStore) Begin(_ context.Context, key, reqHash string) (idempotency.Record, bool, error) {
+	if rec, ok := s.records[key]; ok {
+		if rec.RequestHash != reqHash {
+			return idempotency.Record{}, false, idempotency.ErrConflict
+		}
+		return rec, true, nil
+	}
+	s.records[key] = idempotency.Record{Key: key, RequestHash: reqHash}
+	return s.records[key], false, nil
+}
+
+func (s *stubIdempotencyStore) Finish(_ context.Context, key string, status int, response []byte) error {
+	rec := s.records[key]
+	rec.Status = status
+	rec.Response = append([]byte(nil), response...)
+	s.records[key] = rec
+	return nil
+}
+
+func (s *stubIdempotencyStore) Cleanup(_ context.Context) error {
+	return nil
+}
+
+func TestOptionalIdempotencyMiddleware(t *testing.T) {
+	store := &stubIdempotencyStore{records: make(map[string]idempotency.Record)}
+	calls := 0
+	handler := optionalIdempotencyMiddleware(store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+
+	// POST without Idempotency-Key passes through without caching.
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/carts", strings.NewReader(`{}`))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201", rec.Code)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+
+	// POST with Idempotency-Key executes once and replays on retry.
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/carts", strings.NewReader(`{"currency":"USD"}`))
+		req.Header.Set("Idempotency-Key", "key-1")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("idempotent status = %d, want 201", rec.Code)
+		}
+	}
+	if calls != 3 {
+		t.Fatalf("calls after idempotent replay = %d, want 3", calls)
 	}
 }

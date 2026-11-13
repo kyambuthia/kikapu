@@ -25,12 +25,18 @@ type SubscriberStore interface {
 	ListByEventType(ctx context.Context, eventType string) ([]Subscription, error)
 }
 
+// EventConsumer handles claimed outbox events in-process (e.g. notifications).
+type EventConsumer interface {
+	HandleEvent(ctx context.Context, event events.Event) error
+}
+
 type Deliverer struct {
-	client  *http.Client
-	outbox  events.Outbox
-	store   SubscriberStore
-	signer  func(secret string, ts time.Time, body []byte) string
-	backoff func(attempt int) time.Time
+	client    *http.Client
+	outbox    events.Outbox
+	store     SubscriberStore
+	consumers []EventConsumer
+	signer    func(secret string, ts time.Time, body []byte) string
+	backoff   func(attempt int) time.Time
 }
 
 func NewDeliverer(client *http.Client, outbox events.Outbox, store SubscriberStore) *Deliverer {
@@ -40,6 +46,13 @@ func NewDeliverer(client *http.Client, outbox events.Outbox, store SubscriberSto
 		store:   store,
 		signer:  webhook.Sign,
 		backoff: defaultBackoff,
+	}
+}
+
+// AddConsumer registers an in-process event consumer invoked on each claimed event.
+func (d *Deliverer) AddConsumer(c EventConsumer) {
+	if c != nil {
+		d.consumers = append(d.consumers, c)
 	}
 }
 
@@ -79,11 +92,24 @@ func (d *Deliverer) ProcessBatch(ctx context.Context) {
 	}
 
 	for _, record := range records {
+		var consumerErr error
+		for _, c := range d.consumers {
+			if err := c.HandleEvent(ctx, record.Event); err != nil {
+				consumerErr = err
+				break
+			}
+		}
+		if consumerErr != nil {
+			d.outbox.MarkFailed(ctx, record.ID, consumerErr, d.backoff(record.Attempts))
+			continue
+		}
+
 		subscribers, err := d.store.ListByEventType(ctx, record.Event.Type)
 		if err != nil {
 			continue
 		}
 
+		delivered := false
 		for _, sub := range subscribers {
 			if !sub.Active {
 				continue
@@ -92,9 +118,13 @@ func (d *Deliverer) ProcessBatch(ctx context.Context) {
 			for _, et := range sub.Types {
 				if et == record.Event.Type || et == "*" {
 					d.deliver(ctx, record, sub)
+					delivered = true
 					break
 				}
 			}
+		}
+		if !delivered && len(d.consumers) > 0 {
+			d.outbox.MarkSent(ctx, record.ID)
 		}
 	}
 }

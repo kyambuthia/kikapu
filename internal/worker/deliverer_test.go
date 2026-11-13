@@ -348,3 +348,39 @@ func TestDeliverer_ContextCancellation(t *testing.T) {
 		t.Error("Worker did not stop after context cancellation")
 	}
 }
+
+type stubConsumer struct {
+	events []events.Event
+}
+
+func (c *stubConsumer) HandleEvent(_ context.Context, e events.Event) error {
+	c.events = append(c.events, e)
+	return nil
+}
+
+func TestDeliverer_Consumers(t *testing.T) {
+	o := outbox.NewInMemoryOutbox()
+	store := NewInMemorySubscriberStore()
+	d := NewDeliverer(&http.Client{Timeout: time.Second}, o, store)
+	consumer := &stubConsumer{}
+	d.AddConsumer(consumer)
+
+	ctx := context.Background()
+	evt := events.Event{
+		ID:          "evt_consumer_1",
+		Type:        events.EventTypeOrderPaid,
+		Version:     1,
+		AggregateID: "order_1",
+		OccurredAt:  time.Now(),
+		Data:        []byte(`{"order_id":"order_1"}`),
+	}
+	if err := o.Append(ctx, nil, evt); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	d.ProcessBatch(ctx)
+
+	if len(consumer.events) != 1 || consumer.events[0].ID != "evt_consumer_1" {
+		t.Fatalf("consumer events = %+v, want 1 event evt_consumer_1", consumer.events)
+	}
+}

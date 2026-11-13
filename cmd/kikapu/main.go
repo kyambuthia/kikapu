@@ -22,8 +22,10 @@ import (
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/events"
 	"github.com/kyambuthia/kikapu/internal/fulfillment"
+	"github.com/kyambuthia/kikapu/internal/idempotency"
 	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/migrate"
+	"github.com/kyambuthia/kikapu/internal/notify"
 	"github.com/kyambuthia/kikapu/internal/order"
 	"github.com/kyambuthia/kikapu/internal/outbox"
 	"github.com/kyambuthia/kikapu/internal/payment"
@@ -32,6 +34,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/platform/config"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
+	"github.com/kyambuthia/kikapu/internal/platform/ratelimit"
 	"github.com/kyambuthia/kikapu/internal/region"
 	"github.com/kyambuthia/kikapu/internal/routes"
 	"github.com/kyambuthia/kikapu/internal/search"
@@ -156,6 +159,7 @@ func main() {
 		Timeout: 30 * time.Second,
 	}
 	deliverer := worker.NewDeliverer(httpClient, eventOutbox, subscriberStore)
+	deliverer.AddConsumer(notify.NewConsumer(notify.NewLogSender(logger)))
 
 	if cfg.Mode == "worker" {
 		runWorker(logger, deliverer)
@@ -228,6 +232,11 @@ func main() {
 		}
 	}
 
+	var httpIdempotencyStore idempotency.Store
+	if db != nil {
+		httpIdempotencyStore = idempotency.NewPostgresStore(db)
+	}
+
 	mux := buildAPIMux(apiDeps{
 		db:              db,
 		catalogRepo:     repo,
@@ -244,7 +253,18 @@ func main() {
 		paystackWebhook: paystackWebhook,
 		mpesaCallback:   mpesaCallback,
 	})
-	handler := httpx.LoggingMiddleware(logger)(httpx.RequestIDMiddleware(obs.MetricsMiddleware(mux)))
+	rateLimiter := ratelimit.NewLimiter(100)
+	var apiHandler http.Handler = mux
+	if httpIdempotencyStore != nil {
+		apiHandler = optionalIdempotencyMiddleware(httpIdempotencyStore)(apiHandler)
+	}
+	handler := httpx.LoggingMiddleware(logger)(
+		httpx.RequestIDMiddleware(
+			obs.MetricsMiddleware(
+				ratelimit.MiddlewareWithTrustedProxy(rateLimiter, false)(apiHandler),
+			),
+		),
+	)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
@@ -419,6 +439,29 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 	})
 
 	return mux
+}
+
+func optionalIdempotencyMiddleware(store idempotency.Store) func(http.Handler) http.Handler {
+	enforced := idempotency.Middleware(store)
+	return func(next http.Handler) http.Handler {
+		wrapped := enforced(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Idempotency-Key") != "" && isMutatingMethod(r.Method) {
+				wrapped.ServeHTTP(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func isMutatingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 func openPostgres(databaseURL string) (*sql.DB, error) {
