@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: kikapu API
-  description: Shopping cart service API
+  description: Headless commerce engine REST API
   version: 1.0.0
   contact:
     name: kikapu Team
@@ -14,7 +14,6 @@ paths:
   /healthz:
     get:
       summary: Health check
-      description: Returns service health status
       operationId: getHealth
       responses:
         '200':
@@ -23,27 +22,33 @@ paths:
             application/json:
               schema:
                 type: object
-                required:
-                  - status
+                required: [status]
                 properties:
                   status:
                     type: string
                     enum: [ok]
-                    example: ok
 
   /readyz:
     get:
       summary: Readiness check
-      description: Returns service readiness status
       operationId: getReady
       responses:
         '200':
           description: Service is ready
+        '503':
+          $ref: '#/components/responses/Error'
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus text exposition format
 
   /v1/version:
     get:
       summary: Version information
-      description: Returns service version and commit information
       operationId: getVersion
       responses:
         '200':
@@ -52,45 +57,271 @@ paths:
             application/json:
               schema:
                 type: object
-                required:
-                  - version
-                  - commit
+                required: [version, commit]
                 properties:
                   version:
                     type: string
-                    example: "1.0.0"
                   commit:
                     type: string
-                    example: "abc123"
+
+  /v1/products:
+    get:
+      summary: List products
+      operationId: listProducts
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: region
+          in: query
+          schema:
+            type: string
+        - name: channel
+          in: query
+          schema:
+            type: string
+        - name: fields
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Product list
+        '400':
+          $ref: '#/components/responses/Error'
+
+  /v1/products/{slug}:
+    get:
+      summary: Get product by slug
+      operationId: getProductBySlug
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Product detail
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /v1/regions:
+    get:
+      summary: List configured regions
+      operationId: listRegions
+      responses:
+        '200':
+          description: Region list
+
+  /v1/channels:
+    get:
+      summary: List sales channels
+      operationId: listChannels
+      responses:
+        '200':
+          description: Sales channel list
+
+  /v1/carts:
+    post:
+      summary: Create a cart
+      operationId: createCart
+      responses:
+        '201':
+          description: Cart created
+        '400':
+          $ref: '#/components/responses/Error'
+
+  /v1/carts/{id}:
+    get:
+      summary: Get cart by ID
+      operationId: getCart
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cart detail
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /v1/carts/{id}/items:
+    post:
+      summary: Add item to cart
+      operationId: addCartItem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated cart
+        '400':
+          $ref: '#/components/responses/Error'
+
+  /v1/carts/{id}/checkout:
+    post:
+      summary: Checkout cart and place order
+      operationId: checkoutCart
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Order placed
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+
+  /v1/admin/products:
+    get:
+      summary: List products (admin)
+      operationId: adminListProducts
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Product list
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Create product (admin)
+      operationId: adminCreateProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Product created
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /v1/admin/orders:
+    get:
+      summary: List orders (admin)
+      operationId: adminListOrders
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Order list
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /v1/auth/keys:
+    get:
+      summary: List API keys
+      operationId: listAPIKeys
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: API key list
+        '401':
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Create API key
+      operationId: createAPIKey
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: API key created
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /v1/auth/keys/{id}:
+    delete:
+      summary: Revoke API key
+      operationId: revokeAPIKey
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Key revoked
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /v1/webhooks/paystack:
+    post:
+      summary: Paystack payment webhook receiver
+      operationId: receivePaystackWebhook
+      responses:
+        '200':
+          description: Webhook processed
+        '401':
+          $ref: '#/components/responses/Error'
+
+  /v1/webhooks/mpesa:
+    post:
+      summary: M-Pesa STK callback receiver
+      operationId: receiveMpesaCallback
+      responses:
+        '200':
+          description: Callback processed
+        '403':
+          $ref: '#/components/responses/Error'
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: APIKey
+
   schemas:
     ErrorEnvelope:
       type: object
-      required:
-        - error
+      required: [error]
       properties:
         error:
           $ref: '#/components/schemas/ErrorDetail'
 
     ErrorDetail:
       type: object
-      required:
-        - code
-        - message
+      required: [code, message]
       properties:
         code:
           type: string
           description: Machine-readable error code
-          example: "invalid_input"
         message:
           type: string
           description: Human-readable error message
-          example: "The request was invalid"
         request_id:
           type: string
           description: Request identifier for tracing
-          example: "a1b2c3d4e5f6g7h8"
 
   responses:
     Error:
@@ -99,14 +330,3 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
-
-  headers:
-    X-Request-ID:
-      description: Request identifier for tracing
-      schema:
-        type: string
-    X-Content-Type-Options:
-      description: Prevents MIME type sniffing
-      schema:
-        type: string
-        enum: [nosniff]
