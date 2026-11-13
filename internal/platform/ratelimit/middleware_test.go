@@ -1,11 +1,13 @@
 package ratelimit
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestMiddleware_AllowsAndRateLimits(t *testing.T) {
@@ -93,4 +95,70 @@ func TestMiddlewareKeyIsolationAndConcurrency(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func TestMiddlewareVariants_AndRequestID(t *testing.T) {
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	t.Run("MiddlewareWithRate", func(t *testing.T) {
+		mw := MiddlewareWithRate(NewLimiter(1), func(r *http.Request) string { return r.RemoteAddr }, 1, time.Second)(okHandler)
+		req1 := httptest.NewRequest(http.MethodGet, "/", nil)
+		req1.RemoteAddr = "10.0.0.1:1"
+		rec1 := httptest.NewRecorder()
+		mw.ServeHTTP(rec1, req1)
+		if rec1.Code != http.StatusOK {
+			t.Fatalf("first status = %d, want 200", rec1.Code)
+		}
+
+		req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+		req2.RemoteAddr = "10.0.0.2:1"
+		rec2 := httptest.NewRecorder()
+		mw.ServeHTTP(rec2, req2)
+		if rec2.Code != http.StatusTooManyRequests {
+			t.Fatalf("second status = %d, want 429", rec2.Code)
+		}
+	})
+
+	t.Run("MiddlewareWithKey", func(t *testing.T) {
+		mw := MiddlewareWithKey(NewLimiter(1), "fixed")(okHandler)
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+	})
+
+	t.Run("MiddlewareWithAuth", func(t *testing.T) {
+		mw := MiddlewareWithAuth(NewLimiter(1))(okHandler)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Authorization", "Bearer tok-1")
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+
+		reqUnauth := httptest.NewRequest(http.MethodGet, "/", nil)
+		recUnauth := httptest.NewRecorder()
+		mw.ServeHTTP(recUnauth, reqUnauth)
+		if recUnauth.Code != http.StatusTooManyRequests {
+			t.Fatalf("second key status = %d, want 429", recUnauth.Code)
+		}
+	})
+
+	t.Run("LimiterAndTimeout", func(t *testing.T) {
+		mw := LimiterAndTimeout(NewLimiter(1), time.Second, okHandler)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req = req.WithContext(ContextWithRequestID(context.Background(), "req-123"))
+		if got := RequestID(req); got != "req-123" {
+			t.Fatalf("RequestID = %q, want req-123", got)
+		}
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+	})
 }
