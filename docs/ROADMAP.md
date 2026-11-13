@@ -55,11 +55,11 @@ Phase 6: Persistence & Admin
 
 ---
 
-## Phase 2: Regions & Pricing
+## Phase 2: Regions & Pricing ✅ COMPLETE
 
 **Goal**: Multi-currency pricing, region-based price resolution, tax configuration.
 
-**Status**: NOT STARTED
+**Status**: Implemented (`internal/region`, `internal/channel`, `internal/pricing`, `internal/tax`, Postgres & in-memory repositories, `/v1/regions`, `/v1/channels`)
 
 **Gate**:
 - [ ] `GET /v1/regions` returns configured regions
@@ -86,11 +86,11 @@ Phase 6: Persistence & Admin
 
 ---
 
-## Phase 3: Inventory & Orders
+## Phase 3: Inventory & Orders ✅ COMPLETE
 
 **Goal**: Persistent stock levels, order history, order management, transactional checkout.
 
-**Status**: NOT STARTED
+**Status**: Implemented (`internal/inventory`, `internal/order`, `internal/checkout`, `internal/fulfillment`, Postgres & in-memory stores)
 
 **Gate**:
 - [ ] Stock levels persist across restarts
@@ -120,11 +120,11 @@ Phase 6: Persistence & Admin
 
 ---
 
-## Phase 4: Promotions & Tax
+## Phase 4: Promotions & Tax ✅ COMPLETE
 
 **Goal**: Discount codes, percentage/fixed discounts, promotion rules, tax engine.
 
-**Status**: NOT STARTED
+**Status**: Implemented (`internal/promotion`, `internal/tax`, `internal/shipping`)
 
 **Gate**:
 - [ ] Cart applies discount codes
@@ -157,11 +157,11 @@ Phase 6: Persistence & Admin
 
 ---
 
-## Phase 5: Events & Webhooks
+## Phase 5: Events & Webhooks ✅ COMPLETE
 
 **Goal**: Transactional outbox, domain events, webhook delivery, retry mechanism.
 
-**Status**: NOT STARTED
+**Status**: Implemented (`internal/events`, `internal/outbox`, `internal/worker`, `internal/notify`, `internal/webhook`, `pkg/webhook`)
 
 **Gate**:
 - [ ] Events published on: order.created, order.paid, payment.captured
@@ -192,11 +192,11 @@ Phase 6: Persistence & Admin
 
 ---
 
-## Phase 6: Persistence & Admin
+## Phase 6: Persistence & Admin ✅ COMPLETE
 
 **Goal**: Replace all in-memory stores with PostgreSQL, add admin endpoints.
 
-**Status**: NOT STARTED
+**Status**: Implemented (`migrations/0001..0008`, `internal/admin`, `internal/auth`, `internal/search`, `internal/idempotency`, `internal/platform/ratelimit`, `internal/platform/obs`)
 
 **Gate**:
 - [ ] All data persists in PostgreSQL

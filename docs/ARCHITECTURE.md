@@ -30,8 +30,8 @@ Kikapu is a headless commerce engine exposing a REST API for storefronts, mobile
          ▼                                      ▼
   ┌──────────────┐                    ┌─────────────────┐
   │  PostgreSQL  │                    │    Payment      │
-  │  (planned)   │                    │   Providers     │
-  └──────────────┘                    │  ┌───────────┐  │
+  │  (optional   │                    │   Providers     │
+  │  via DB URL) │                    │  ┌───────────┐  │
                                       │  │ Paystack  │  │
                                       │  └───────────┘  │
                                       │  ┌───────────┐  │
@@ -49,7 +49,7 @@ Kikapu is a headless commerce engine exposing a REST API for storefronts, mobile
                                       └─────────────────┘
 ```
 
-**Current state**: In-memory stores, no Postgres. Webhook consumers consume payment callbacks (Paystack, M-Pesa).
+**Current state**: Supports both PostgreSQL persistence (when `DATABASE_URL` is configured, with migrations in `migrations/0001..0008`) and in-memory fallback repositories for local development/testing. Includes `api`, `worker`, and `migrate` modes, Prometheus `/metrics`, OpenTelemetry tracing, rate limiting, HTTP idempotency middleware, full-text product search, and outbox-driven webhook & notification delivery.
 
 ## 2. Containers (C4 Level 2)
 
@@ -62,7 +62,7 @@ Kikapu is a headless commerce engine exposing a REST API for storefronts, mobile
 │  │                                                        │  │
 │  │   ┌──────────────┐          ┌──────────────────┐     │  │
 │  │   │  API Mode    │          │   Worker Mode    │     │  │
-│  │   │  (default)   │          │    (planned)     │     │  │
+│  │   │  (default)   │          │  (outbox/notify) │     │  │
 │  │   │              │          │                  │     │  │
 │  │   │ - HTTP API   │          │ - Event poller   │     │  │
 │  │   │ - REST routes│          │ - Webhook retry  │     │  │
@@ -79,14 +79,15 @@ Kikapu is a headless commerce engine exposing a REST API for storefronts, mobile
 │  └──────────────────────────────────────────────────────┘  │
 │                                                              │
 │  Data Stores:                                               │
-│  - In-memory (current): cart, inventory, idempotency        │
-│  - PostgreSQL (planned): all domain state                   │
+│  - PostgreSQL (when DATABASE_URL is set): domain state,     │
+│    outbox, idempotency, search, auth, webhooks, regions     │
+│  - In-memory fallback: local dev & unit tests               │
 └─────────────────────────────────────────────────────────────┘
 
-No message broker. No cache layer. No microservices.
+No external message broker. No microservices.
 ```
 
-**Deployment**: Same binary, same container image. Mode controlled by `KIKAPU_MODE=api|worker`.
+**Deployment**: Same binary, same container image. Mode controlled by `KIKAPU_MODE=api|worker|migrate`.
 
 ## 3. Module Map
 
