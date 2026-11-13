@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/kyambuthia/kikapu/internal/admin"
+	"github.com/kyambuthia/kikapu/internal/auth"
 	"github.com/kyambuthia/kikapu/internal/cart"
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/channel"
@@ -130,7 +133,38 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	go deliverer.Run(workerCtx, 5*time.Second)
 
-	mux := buildAPIMux(repo, regionRepo, channelRepo, cartStore, checkoutSvc)
+	var paystackWebhook http.Handler
+	if psClient, ok := paymentProvider.(*paystack.Client); ok {
+		paystackWebhook = paystack.NewWebhookHandler(psClient, paystack.NewInMemoryEventStore(), logger)
+	}
+
+	var mpesaCallback http.Handler
+	if cfg.PaymentProvider == "mpesa" || cfg.MpesaAllowedCIDRs != "" {
+		cbHandler, err := mpesa.NewCallbackHandler(
+			mpesa.NewInMemoryCallbackStore(),
+			parseCSV(cfg.MpesaAllowedCIDRs),
+			logger,
+			false,
+		)
+		if err != nil {
+			logger.Error("failed to create M-Pesa callback handler", "error", err)
+			os.Exit(1)
+		}
+		mpesaCallback = cbHandler
+	}
+
+	mux := buildAPIMux(apiDeps{
+		catalogRepo:     repo,
+		regionRepo:      regionRepo,
+		channelRepo:     channelRepo,
+		cartStore:       cartStore,
+		checkoutSvc:     checkoutSvc,
+		adminProducts:   admin.NewMemoryProductRepository(),
+		adminStock:      admin.NewMemoryStockRepository(),
+		authStore:       auth.NewInMemoryStore(),
+		paystackWebhook: paystackWebhook,
+		mpesaCallback:   mpesaCallback,
+	})
 	handler := httpx.LoggingMiddleware(logger)(httpx.RequestIDMiddleware(obs.MetricsMiddleware(mux)))
 
 	server := &http.Server{
@@ -206,19 +240,55 @@ func buildPaymentProvider(cfg *config.Config) (payment.Provider, error) {
 	}
 }
 
-func buildAPIMux(
-	repo catalog.Repository,
-	regionRepo region.Repository,
-	channelRepo channel.Repository,
-	cartStore cart.Store,
-	checkoutSvc *checkout.Service,
-) *http.ServeMux {
+type apiDeps struct {
+	catalogRepo     catalog.Repository
+	regionRepo      region.Repository
+	channelRepo     channel.Repository
+	cartStore       cart.Store
+	checkoutSvc     *checkout.Service
+	adminProducts   admin.ProductRepository
+	adminStock      admin.StockRepository
+	authStore       auth.KeyStore
+	paystackWebhook http.Handler
+	mpesaCallback   http.Handler
+}
+
+func buildAPIMux(deps apiDeps) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	routes.NewCatalogHandlerWithFilters(repo, regionRepo, channelRepo).RegisterRoutes(mux)
-	routes.NewRegionHandler(regionRepo).RegisterRoutes(mux)
-	routes.NewChannelHandler(channelRepo).RegisterRoutes(mux)
-	routes.NewCartHandler(cartStore, checkoutSvc).RegisterRoutes(mux)
+	routes.NewCatalogHandlerWithFilters(deps.catalogRepo, deps.regionRepo, deps.channelRepo).RegisterRoutes(mux)
+	routes.NewRegionHandler(deps.regionRepo).RegisterRoutes(mux)
+	routes.NewChannelHandler(deps.channelRepo).RegisterRoutes(mux)
+	routes.NewCartHandler(deps.cartStore, deps.checkoutSvc).RegisterRoutes(mux)
+
+	if deps.adminProducts != nil && deps.adminStock != nil {
+		admin.NewHandler(deps.adminProducts, deps.adminStock).RegisterRoutes(mux)
+	}
+
+	if deps.authStore != nil {
+		createKey := auth.CreateKeyHandler(deps.authStore)
+		listKeys := auth.ListKeysHandler(deps.authStore)
+		revokeKey := auth.RevokeKeyHandler(deps.authStore)
+
+		mux.HandleFunc("/v1/auth/keys", func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				listKeys(w, r)
+			case http.MethodPost:
+				createKey(w, r)
+			default:
+				httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
+			}
+		})
+		mux.HandleFunc("DELETE /v1/auth/keys/{id}", revokeKey)
+	}
+
+	if deps.paystackWebhook != nil {
+		mux.Handle("/v1/webhooks/paystack", deps.paystackWebhook)
+	}
+	if deps.mpesaCallback != nil {
+		mux.Handle("/v1/webhooks/mpesa", deps.mpesaCallback)
+	}
 
 	mux.Handle("/metrics", promhttp.Handler())
 
@@ -238,6 +308,20 @@ func buildAPIMux(
 	})
 
 	return mux
+}
+
+func parseCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func defaultRegions() []region.Region {

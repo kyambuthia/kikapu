@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/kyambuthia/kikapu/internal/admin"
+	"github.com/kyambuthia/kikapu/internal/auth"
 	"github.com/kyambuthia/kikapu/internal/cart"
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/channel"
@@ -29,7 +31,16 @@ func TestBuildAPIMux_CoreEndpoints(t *testing.T) {
 		outbox.NewInMemoryOutbox(),
 	)
 
-	mux := buildAPIMux(repo, regionRepo, channelRepo, cartStore, checkoutSvc)
+	mux := buildAPIMux(apiDeps{
+		catalogRepo:   repo,
+		regionRepo:    regionRepo,
+		channelRepo:   channelRepo,
+		cartStore:     cartStore,
+		checkoutSvc:   checkoutSvc,
+		adminProducts: admin.NewMemoryProductRepository(),
+		adminStock:    admin.NewMemoryStockRepository(),
+		authStore:     auth.NewInMemoryStore(),
+	})
 
 	tests := []struct {
 		name   string
@@ -44,6 +55,8 @@ func TestBuildAPIMux_CoreEndpoints(t *testing.T) {
 		{name: "regions", method: http.MethodGet, path: "/v1/regions", want: http.StatusOK},
 		{name: "channels", method: http.MethodGet, path: "/v1/channels", want: http.StatusOK},
 		{name: "products", method: http.MethodGet, path: "/v1/products", want: http.StatusOK},
+		{name: "admin products", method: http.MethodGet, path: "/v1/admin/products", want: http.StatusOK},
+		{name: "auth keys", method: http.MethodGet, path: "/v1/auth/keys", want: http.StatusOK},
 	}
 
 	for _, tc := range tests {
@@ -52,7 +65,7 @@ func TestBuildAPIMux_CoreEndpoints(t *testing.T) {
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 			if rec.Code != tc.want {
-				t.Fatalf("GET %s status = %d, want %d (body: %s)", tc.path, rec.Code, tc.want, rec.Body.String())
+				t.Fatalf("%s %s status = %d, want %d (body: %s)", tc.method, tc.path, rec.Code, tc.want, rec.Body.String())
 			}
 		})
 	}
