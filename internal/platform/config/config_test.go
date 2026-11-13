@@ -30,6 +30,16 @@ func TestLoad(t *testing.T) {
 			wantErr: nil,
 		},
 		{
+			name: "migrate mode",
+			setup: func() {
+				os.Setenv("KIKAPU_MODE", "migrate")
+			},
+			cleanup: func() {
+				os.Unsetenv("KIKAPU_MODE")
+			},
+			wantErr: nil,
+		},
+		{
 			name: "invalid mode",
 			setup: func() {
 				os.Setenv("KIKAPU_MODE", "invalid")
@@ -37,7 +47,7 @@ func TestLoad(t *testing.T) {
 			cleanup: func() {
 				os.Unsetenv("KIKAPU_MODE")
 			},
-			wantErr: errors.New("mode must be 'api' or 'worker'"),
+			wantErr: errors.New("mode must be 'api', 'worker', or 'migrate'"),
 		},
 		{
 			name: "invalid log level",
@@ -149,7 +159,7 @@ func TestConfigValidate(t *testing.T) {
 				LogLevel:        "info",
 				PaymentProvider: "fake",
 			},
-			wantErr: errors.New("mode must be 'api' or 'worker'"),
+			wantErr: errors.New("mode must be 'api', 'worker', or 'migrate'"),
 		},
 		{
 			name: "invalid log level",

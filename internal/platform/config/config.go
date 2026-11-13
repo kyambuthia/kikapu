@@ -50,8 +50,8 @@ func (c *Config) Validate() error {
 		return errors.New("address is required")
 	}
 
-	if c.Mode != "api" && c.Mode != "worker" {
-		return errors.New("mode must be 'api' or 'worker'")
+	if c.Mode != "api" && c.Mode != "worker" && c.Mode != "migrate" {
+		return errors.New("mode must be 'api', 'worker', or 'migrate'")
 	}
 
 	validLevels := map[string]bool{
