@@ -71,7 +71,7 @@ start_postgres() {
     local max_attempts=30
     local attempt=0
     while [ $attempt -lt $max_attempts ]; do
-        if docker exec "${DB_CONTAINER_NAME}" pg_isready -U "${DB_USER}" -d "${DB_NAME}" >/dev/null 2>&1; then
+        if psql "${DATABASE_URL}" -c "SELECT 1" >/dev/null 2>&1; then
             info "PostgreSQL is ready"
             return 0
         fi
@@ -86,7 +86,7 @@ get_previous_tag() {
     local tag
     tag=$(git -C "${PROJECT_ROOT}" describe --tags --abbrev=0 2>/dev/null || echo "")
     if [ -z "$tag" ]; then
-        warn "No previous tag found. Using initial state check."
+        warn "No previous tag found. Using initial state check." >&2
         echo ""
         return
     fi
@@ -117,14 +117,24 @@ apply_migrations() {
         error "Failed to ensure schema_migrations table"
     }
 
-    # Use psql to execute migrations directly
+    # Use psql to execute migrations directly (skipping already-applied versions)
     for sql_file in $(find "${migrations_path}" -name "*.sql" -type f | sort); do
         local version
         version=$(basename "$sql_file" | sed 's/_.*//')
-        
+
+        local already_applied
+        already_applied=$(psql "${DATABASE_URL}" -t -A -c "SELECT 1 FROM schema_migrations WHERE version = '${version}' LIMIT 1" 2>/dev/null || echo "")
+        if [ "${already_applied}" = "1" ]; then
+            info "Skipping already applied: $(basename "$sql_file")"
+            continue
+        fi
+
         info "Applying: $(basename "$sql_file")"
-        psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -f "$sql_file" >/dev/null 2>&1 || {
+        psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -f "$sql_file" || {
             error "Failed to apply migration: $(basename "$sql_file")"
+        }
+        psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations (version) VALUES ('${version}') ON CONFLICT (version) DO NOTHING" >/dev/null || {
+            error "Failed to record migration: $(basename "$sql_file")"
         }
     done
 
