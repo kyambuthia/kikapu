@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
@@ -70,6 +71,25 @@ func (s *InMemoryStore) Create(name string, scopes []string, expiresAt *int64) (
 	s.mu.Unlock()
 
 	return key, keyStr, nil
+}
+
+// Seed registers a pre-shared API key (for example from KIKAPU_ADMIN_KEY).
+func (s *InMemoryStore) Seed(name, rawKey string, scopes []string) (*Key, error) {
+	if rawKey == "" {
+		return nil, ErrKeyInvalid
+	}
+	hash := sha256.Sum256([]byte(rawKey))
+	key := &Key{
+		ID:     generateID(),
+		Name:   name,
+		Prefix: ExtractPrefix(rawKey),
+		Hash:   hash[:],
+		Scopes: scopes,
+	}
+	s.mu.Lock()
+	s.keys[key.ID] = key
+	s.mu.Unlock()
+	return key, nil
 }
 
 func (s *InMemoryStore) List() ([]Key, error) {

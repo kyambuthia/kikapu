@@ -191,6 +191,14 @@ func main() {
 		mpesaCallback = cbHandler
 	}
 
+	authStore := auth.NewInMemoryStore()
+	if adminKey := os.Getenv("KIKAPU_ADMIN_KEY"); adminKey != "" {
+		if _, err := authStore.Seed("bootstrap-admin", adminKey, []string{"admin"}); err != nil {
+			logger.Error("failed to seed admin API key", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	mux := buildAPIMux(apiDeps{
 		db:              db,
 		catalogRepo:     repo,
@@ -202,7 +210,7 @@ func main() {
 		adminStock:      adminStock,
 		adminOrderStore: adminOrderStore,
 		fulfillmentSvc:  fulfillmentSvc,
-		authStore:       auth.NewInMemoryStore(),
+		authStore:       authStore,
 		paystackWebhook: paystackWebhook,
 		mpesaCallback:   mpesaCallback,
 	})
@@ -306,6 +314,7 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 	routes.NewCartHandler(deps.cartStore, deps.checkoutSvc).RegisterRoutes(mux)
 
 	if deps.adminProducts != nil && deps.adminStock != nil {
+		adminMux := http.NewServeMux()
 		adminHandler := admin.NewHandler(deps.adminProducts, deps.adminStock)
 		if deps.adminOrderStore != nil {
 			adminHandler.SetOrderStore(deps.adminOrderStore)
@@ -313,15 +322,22 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 		if deps.fulfillmentSvc != nil {
 			adminHandler.SetFulfillmentService(deps.fulfillmentSvc)
 		}
-		adminHandler.RegisterRoutes(mux)
+		adminHandler.RegisterRoutes(adminMux)
+
+		var adminRoute http.Handler = adminMux
+		if deps.authStore != nil {
+			adminRoute = auth.RequireScope(adminMux, deps.authStore, "admin")
+		}
+		mux.Handle("/v1/admin/", adminRoute)
 	}
 
 	if deps.authStore != nil {
+		authMux := http.NewServeMux()
 		createKey := auth.CreateKeyHandler(deps.authStore)
 		listKeys := auth.ListKeysHandler(deps.authStore)
 		revokeKey := auth.RevokeKeyHandler(deps.authStore)
 
-		mux.HandleFunc("/v1/auth/keys", func(w http.ResponseWriter, r *http.Request) {
+		authMux.HandleFunc("/v1/auth/keys", func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
 			case http.MethodGet:
 				listKeys(w, r)
@@ -331,7 +347,9 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 				httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
 			}
 		})
-		mux.HandleFunc("DELETE /v1/auth/keys/{id}", revokeKey)
+		authMux.HandleFunc("DELETE /v1/auth/keys/{id}", revokeKey)
+
+		mux.Handle("/v1/auth/", auth.RequireScope(authMux, deps.authStore, "admin"))
 	}
 
 	if deps.paystackWebhook != nil {
