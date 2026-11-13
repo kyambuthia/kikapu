@@ -3,8 +3,6 @@ package catalog
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 
 	"github.com/kyambuthia/kikapu/internal/platform/money"
@@ -90,21 +88,43 @@ func (s *PostgresStore) List(ctx interface{}, opts ListOptions) ([]Product, stri
 		return nil, "", ErrInvalidLimit
 	}
 
-	query := `
-		SELECT p.id, p.slug, p.name, p.status
-		FROM products p
-		ORDER BY p.id
-		LIMIT $1
-	`
+	var afterID string
+	if opts.Cursor != "" {
+		var err error
+		afterID, err = decodeCursor(opts.Cursor)
+		if err != nil {
+			return nil, "", err
+		}
+	}
 
-	rows, err := s.db.QueryContext(c, query, limit+1)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if afterID != "" {
+		query := `
+			SELECT p.id, p.slug, p.name, p.status
+			FROM products p
+			WHERE p.id > $1
+			ORDER BY p.id
+			LIMIT $2
+		`
+		rows, err = s.db.QueryContext(c, query, afterID, limit+1)
+	} else {
+		query := `
+			SELECT p.id, p.slug, p.name, p.status
+			FROM products p
+			ORDER BY p.id
+			LIMIT $1
+		`
+		rows, err = s.db.QueryContext(c, query, limit+1)
+	}
 	if err != nil {
 		return nil, "", fmt.Errorf("catalog: list products: %w", err)
 	}
 	defer rows.Close()
 
 	var products []Product
-	var lastID string
 
 	for rows.Next() {
 		var p Product
@@ -112,7 +132,6 @@ func (s *PostgresStore) List(ctx interface{}, opts ListOptions) ([]Product, stri
 			return nil, "", fmt.Errorf("catalog: scan product: %w", err)
 		}
 		products = append(products, p)
-		lastID = p.ID
 	}
 
 	if err := rows.Err(); err != nil {
@@ -122,14 +141,11 @@ func (s *PostgresStore) List(ctx interface{}, opts ListOptions) ([]Product, stri
 	var nextCursor string
 	if len(products) > limit {
 		products = products[:limit]
-		cursorData := struct {
-			LastID string `json:"last_id"`
-		}{LastID: lastID}
-		cursorBytes, err := json.Marshal(cursorData)
+		var err error
+		nextCursor, err = encodeCursor(products[limit-1].ID)
 		if err != nil {
 			return nil, "", fmt.Errorf("catalog: marshal cursor: %w", err)
 		}
-		nextCursor = base64.StdEncoding.EncodeToString(cursorBytes)
 	}
 
 	for i := range products {

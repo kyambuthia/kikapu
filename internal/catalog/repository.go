@@ -58,20 +58,14 @@ func (r *InMemoryRepository) List(ctx interface{}, opts ListOptions) ([]Product,
 
 	startIdx := 0
 	if opts.Cursor != "" {
-		decoded, err := base64.StdEncoding.DecodeString(opts.Cursor)
+		lastID, err := decodeCursor(opts.Cursor)
 		if err != nil {
-			return nil, "", ErrInvalidCursor
-		}
-		var cursorData struct {
-			LastID string `json:"last_id"`
-		}
-		if err := json.Unmarshal(decoded, &cursorData); err != nil {
-			return nil, "", ErrInvalidCursor
+			return nil, "", err
 		}
 
 		found := false
 		for i, id := range ids {
-			if id > cursorData.LastID {
+			if id > lastID {
 				startIdx = i
 				found = true
 				break
@@ -95,18 +89,39 @@ func (r *InMemoryRepository) List(ctx interface{}, opts ListOptions) ([]Product,
 
 	var nextCursor string
 	if endIdx < len(ids) {
-		lastID := ids[endIdx-1]
-		cursorData := struct {
-			LastID string `json:"last_id"`
-		}{LastID: lastID}
-		cursorBytes, err := json.Marshal(cursorData)
+		var err error
+		nextCursor, err = encodeCursor(ids[endIdx-1])
 		if err != nil {
 			return nil, "", err
 		}
-		nextCursor = base64.StdEncoding.EncodeToString(cursorBytes)
 	}
 
 	return result, nextCursor, nil
+}
+
+func decodeCursor(cursor string) (string, error) {
+	decoded, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", ErrInvalidCursor
+	}
+	var cursorData struct {
+		LastID string `json:"last_id"`
+	}
+	if err := json.Unmarshal(decoded, &cursorData); err != nil {
+		return "", ErrInvalidCursor
+	}
+	return cursorData.LastID, nil
+}
+
+func encodeCursor(lastID string) (string, error) {
+	cursorData := struct {
+		LastID string `json:"last_id"`
+	}{LastID: lastID}
+	cursorBytes, err := json.Marshal(cursorData)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(cursorBytes), nil
 }
 
 func LoadProductsFromJSON(data []byte) ([]Product, error) {
