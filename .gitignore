@@ -1,6 +1,6 @@
 # Binaries
-kikapu
-loadapp
+/kikapu
+/loadapp
 *.exe
 *.exe~
 *.dll

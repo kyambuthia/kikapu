@@ -13,6 +13,7 @@ import (
 
 	"github.com/kyambuthia/kikapu/internal/cart"
 	"github.com/kyambuthia/kikapu/internal/catalog"
+	"github.com/kyambuthia/kikapu/internal/channel"
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/migrate"
@@ -23,8 +24,10 @@ import (
 	"github.com/kyambuthia/kikapu/internal/platform/config"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
+	"github.com/kyambuthia/kikapu/internal/region"
 	"github.com/kyambuthia/kikapu/internal/routes"
 	"github.com/kyambuthia/kikapu/internal/worker"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -79,8 +82,15 @@ func main() {
 		return
 	}
 
-	if cfg.Mode != "api" {
-		logger.Info("starting in worker mode", "mode", cfg.Mode)
+	eventOutbox := outbox.NewInMemoryOutbox()
+	subscriberStore := worker.NewInMemorySubscriberStore()
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	deliverer := worker.NewDeliverer(httpClient, eventOutbox, subscriberStore)
+
+	if cfg.Mode == "worker" {
+		runWorker(logger, deliverer)
 		return
 	}
 
@@ -102,77 +112,26 @@ func main() {
 	}
 
 	repo := catalog.NewInMemoryRepository(products)
-	catalogHandler := routes.NewCatalogHandler(repo)
+	regionRepo := region.NewInMemoryRepository(defaultRegions())
+	channelRepo := channel.NewInMemoryRepository(defaultChannels())
 
 	cartStore := cart.NewInMemoryStore()
 	inventoryStore := inventory.NewMemoryStore(nil)
 
-	var paymentProvider payment.Provider
-	switch cfg.PaymentProvider {
-	case "paystack":
-		psClient, err := paystack.New(paystack.Config{
-			BaseURL:   cfg.PaystackBaseURL,
-			SecretKey: cfg.PaystackSecretKey,
-		})
-		if err != nil {
-			logger.Error("failed to create Paystack client", "error", err)
-			os.Exit(1)
-		}
-		paymentProvider = psClient
-	case "mpesa":
-		mpesaClient, err := mpesa.New(mpesa.Config{
-			BaseURL:        cfg.MpesaBaseURL,
-			ConsumerKey:    cfg.MpesaConsumerKey,
-			ConsumerSecret: cfg.MpesaConsumerSecret,
-			ShortCode:      cfg.MpesaShortCode,
-			Passkey:        cfg.MpesaPasskey,
-			CallbackURL:    cfg.MpesaCallbackURL,
-		})
-		if err != nil {
-			logger.Error("failed to create M-Pesa client", "error", err)
-			os.Exit(1)
-		}
-		paymentProvider = mpesaClient
-	default:
-		paymentProvider = payment.NewFakeProvider(payment.NoFailure)
+	paymentProvider, err := buildPaymentProvider(cfg)
+	if err != nil {
+		logger.Error("failed to create payment provider", "provider", cfg.PaymentProvider, "error", err)
+		os.Exit(1)
 	}
 
-	eventOutbox := outbox.NewInMemoryOutbox()
 	idempotencyStore := checkout.NewIdempotencyStore()
 	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
-
-	subscriberStore := worker.NewInMemorySubscriberStore()
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-	deliverer := worker.NewDeliverer(httpClient, eventOutbox, subscriberStore)
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	go deliverer.Run(workerCtx, 5*time.Second)
 
-	cartHandler := routes.NewCartHandler(cartStore, checkoutSvc)
-
-	mux := http.NewServeMux()
-
-	catalogHandler.RegisterRoutes(mux)
-	cartHandler.RegisterRoutes(mux)
-
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	mux.HandleFunc("/v1/version", func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{
-			"version": version,
-			"commit":  commit,
-		})
-	})
-
-	handler := httpx.LoggingMiddleware(logger)(httpx.RequestIDMiddleware(mux))
+	mux := buildAPIMux(repo, regionRepo, channelRepo, cartStore, checkoutSvc)
+	handler := httpx.LoggingMiddleware(logger)(httpx.RequestIDMiddleware(obs.MetricsMiddleware(mux)))
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
@@ -209,4 +168,106 @@ func main() {
 	}
 
 	logger.Info("server stopped")
+}
+
+func runWorker(logger *slog.Logger, deliverer *worker.Deliverer) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logger.Info("starting in worker mode", "version", version, "commit", commit)
+	go deliverer.Run(ctx, 5*time.Second)
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Info("shutting down worker")
+	cancel()
+}
+
+func buildPaymentProvider(cfg *config.Config) (payment.Provider, error) {
+	switch cfg.PaymentProvider {
+	case "paystack":
+		return paystack.New(paystack.Config{
+			BaseURL:   cfg.PaystackBaseURL,
+			SecretKey: cfg.PaystackSecretKey,
+		})
+	case "mpesa":
+		return mpesa.New(mpesa.Config{
+			BaseURL:        cfg.MpesaBaseURL,
+			ConsumerKey:    cfg.MpesaConsumerKey,
+			ConsumerSecret: cfg.MpesaConsumerSecret,
+			ShortCode:      cfg.MpesaShortCode,
+			Passkey:        cfg.MpesaPasskey,
+			CallbackURL:    cfg.MpesaCallbackURL,
+		})
+	default:
+		return payment.NewFakeProvider(payment.NoFailure), nil
+	}
+}
+
+func buildAPIMux(
+	repo catalog.Repository,
+	regionRepo region.Repository,
+	channelRepo channel.Repository,
+	cartStore cart.Store,
+	checkoutSvc *checkout.Service,
+) *http.ServeMux {
+	mux := http.NewServeMux()
+
+	routes.NewCatalogHandlerWithFilters(repo, regionRepo, channelRepo).RegisterRoutes(mux)
+	routes.NewRegionHandler(regionRepo).RegisterRoutes(mux)
+	routes.NewChannelHandler(channelRepo).RegisterRoutes(mux)
+	routes.NewCartHandler(cartStore, checkoutSvc).RegisterRoutes(mux)
+
+	mux.Handle("/metrics", promhttp.Handler())
+
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("/v1/version", func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{
+			"version": version,
+			"commit":  commit,
+		})
+	})
+
+	return mux
+}
+
+func defaultRegions() []region.Region {
+	return []region.Region{
+		{
+			ID:           "ke",
+			Name:         "Kenya",
+			Currency:     "KES",
+			Countries:    []string{"KE"},
+			TaxRateBPS:   1600,
+			TaxInclusive: true,
+		},
+		{
+			ID:           "us",
+			Name:         "United States",
+			Currency:     "USD",
+			Countries:    []string{"US"},
+			TaxRateBPS:   0,
+			TaxInclusive: false,
+		},
+	}
+}
+
+func defaultChannels() []channel.SalesChannel {
+	return []channel.SalesChannel{
+		{
+			ID:      "web",
+			Name:    "Web Storefront",
+			Slug:    "web",
+			Regions: []string{"ke", "us"},
+		},
+	}
 }
