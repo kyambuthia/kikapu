@@ -107,6 +107,16 @@ apply_migrations() {
     migration_count=$(find "${migrations_path}" -name "*.sql" -type f | wc -l)
     info "Found ${migration_count} migration file(s)"
 
+    # Ensure schema_migrations exists (matching internal/migrate/migrate.go)
+    psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version TEXT PRIMARY KEY,
+            applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+    " >/dev/null 2>&1 || {
+        error "Failed to ensure schema_migrations table"
+    }
+
     # Use psql to execute migrations directly
     for sql_file in $(find "${migrations_path}" -name "*.sql" -type f | sort); do
         local version
@@ -352,7 +362,8 @@ run_self_test() {
 		    id UUID PRIMARY KEY DEFAULT gen_random_uuid()
 		);
 		
-		INSERT INTO schema_migrations (version) VALUES ('0003');
+		INSERT INTO schema_migrations (version) VALUES ('0003')
+		ON CONFLICT (version) DO NOTHING;
 	EOF
     
     MIGRATIONS_DIR="${test_migrations}"
