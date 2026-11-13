@@ -34,6 +34,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/platform/obs"
 	"github.com/kyambuthia/kikapu/internal/region"
 	"github.com/kyambuthia/kikapu/internal/routes"
+	"github.com/kyambuthia/kikapu/internal/search"
 	"github.com/kyambuthia/kikapu/internal/worker"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -112,6 +113,7 @@ func main() {
 		adminStock      admin.StockRepository
 		adminOrderStore admin.OrderLister
 		fulfillmentSvc  *fulfillment.Service
+		searchStore     *search.PostgresStore
 		authStore       interface {
 			auth.KeyStore
 			Seed(name, rawKey string, scopes []string) (*auth.Key, error)
@@ -138,6 +140,7 @@ func main() {
 			&orderFetcherAdapter{store: order.NewPostgresStore(db)},
 		)
 		authStore = auth.NewPostgresStore(db)
+		searchStore = search.NewPostgresStore(db)
 		logger.Info("using PostgreSQL persistence")
 	} else {
 		eventOutbox = outbox.NewInMemoryOutbox()
@@ -236,6 +239,7 @@ func main() {
 		adminStock:      adminStock,
 		adminOrderStore: adminOrderStore,
 		fulfillmentSvc:  fulfillmentSvc,
+		searchStore:     searchStore,
 		authStore:       authStore,
 		paystackWebhook: paystackWebhook,
 		mpesaCallback:   mpesaCallback,
@@ -326,6 +330,7 @@ type apiDeps struct {
 	adminStock      admin.StockRepository
 	adminOrderStore admin.OrderLister
 	fulfillmentSvc  *fulfillment.Service
+	searchStore     *search.PostgresStore
 	authStore       auth.KeyStore
 	paystackWebhook http.Handler
 	mpesaCallback   http.Handler
@@ -338,6 +343,9 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 	routes.NewRegionHandler(deps.regionRepo).RegisterRoutes(mux)
 	routes.NewChannelHandler(deps.channelRepo).RegisterRoutes(mux)
 	routes.NewCartHandler(deps.cartStore, deps.checkoutSvc).RegisterRoutes(mux)
+	if deps.searchStore != nil {
+		routes.NewSearchHandler(deps.searchStore).RegisterRoutes(mux)
+	}
 
 	if deps.adminProducts != nil && deps.adminStock != nil {
 		adminMux := http.NewServeMux()
