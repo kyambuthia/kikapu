@@ -605,3 +605,37 @@ func TestRunWithZeroWorkers(t *testing.T) {
 		t.Errorf("run with zero workers should return nil, got %v", results)
 	}
 }
+
+func TestRun_EndToEndAndReporting(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cart_1","data":[]}`))
+	}))
+	defer srv.Close()
+
+	origCfg := config
+	defer func() {
+		config = origCfg
+	}()
+
+	config = Config{
+		Scenario:    "list",
+		Concurrency: 2,
+		Duration:    120 * time.Millisecond,
+		RPSCap:      10,
+		Addr:        srv.Listener.Addr().String(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	results := run(ctx, config.Scenario, config.Concurrency, config.Duration, config.RPSCap)
+	if len(results) == 0 {
+		t.Fatal("expected non-empty results")
+	}
+
+	printTable(results)
+	if err := saveJSON(results); err != nil {
+		t.Fatalf("saveJSON() error = %v", err)
+	}
+}

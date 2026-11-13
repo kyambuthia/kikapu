@@ -114,6 +114,7 @@ func run(ctx context.Context, scenario string, workers int, duration time.Durati
 	defer ticker.Stop()
 
 	for i := 0; i < workers; i++ {
+		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
 
