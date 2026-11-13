@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -80,16 +81,16 @@ func TestMiddlewareKeyIsolationAndConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
-		go func() {
+		go func(idx int) {
 			defer wg.Done()
 			req := httptest.NewRequest(http.MethodGet, "/v1/products", nil)
-			req.RemoteAddr = "198.51.100.1:4321"
+			req.RemoteAddr = fmt.Sprintf("198.51.100.%d:4321", idx+1)
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
 			if rec.Code != http.StatusOK {
 				t.Errorf("concurrent request failed with %d", rec.Code)
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
 }
