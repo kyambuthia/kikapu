@@ -90,6 +90,19 @@ func main() {
 		return
 	}
 
+	shutdownTracer, err := obs.InitTracer(context.Background(), "kikapu", version)
+	if err != nil {
+		logger.Warn("failed to initialize tracer", "error", err)
+	} else {
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := shutdownTracer(ctx); err != nil {
+				logger.Warn("tracer shutdown error", "error", err)
+			}
+		}()
+	}
+
 	var (
 		db              *sql.DB
 		eventOutbox     events.Outbox
