@@ -23,6 +23,24 @@ func setupTestDB(t *testing.T) (*sql.DB, func()) {
 		t.Fatalf("Failed to connect to database: %v", err)
 	}
 
+	seedStatements := []string{
+		`INSERT INTO products (id, slug, name, status) VALUES
+			('00000000-0000-0000-0000-000000000101', 'organic-cotton-tee', 'Organic Cotton T-Shirt', 'active'),
+			('00000000-0000-0000-0000-000000000102', 'sokomoko-mug', 'Sokomoko Ceramic Mug', 'active'),
+			('00000000-0000-0000-0000-000000000103', 'cotton-tote', 'Cotton Tote Bag', 'active')
+		ON CONFLICT (slug) DO NOTHING`,
+		`INSERT INTO variants (id, product_id, sku, price, currency) VALUES
+			('00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000101', 'SKU-COTTON-001', 2500, 'USD'),
+			('00000000-0000-0000-0000-000000000202', '00000000-0000-0000-0000-000000000102', 'SKU-SOKO-002', 1500, 'USD'),
+			('00000000-0000-0000-0000-000000000203', '00000000-0000-0000-0000-000000000103', 'SKU-TOTE-003', 1800, 'USD')
+		ON CONFLICT (sku) DO NOTHING`,
+	}
+	for _, stmt := range seedStatements {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("Failed to seed search test data: %v", err)
+		}
+	}
+
 	cleanup := func() {
 		db.Close()
 	}

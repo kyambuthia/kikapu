@@ -32,7 +32,7 @@ func TestPostgresStore_Get(t *testing.T) {
 
 	cleanupOrders(t, db)
 
-	orderID := insertTestOrder(t, ctx, db, "ord-001", "KIK-001", "reg-001", 10000, 0, 1600, 11600, "USD")
+	orderID := insertTestOrder(t, ctx, db, "00000000-0000-0000-0000-000000000001", "KIK-001", "reg-001", 10000, 0, 1600, 11600, "USD")
 	insertTestOrderLine(t, ctx, db, orderID, "var-001", "SKU-001", 2, 5000, 0, 800, "USD")
 
 	tests := []struct {
@@ -88,7 +88,7 @@ func TestPostgresStore_Create(t *testing.T) {
 	cleanupOrders(t, db)
 
 	order := &Order{
-		ID:                "ord-001",
+		ID:                "00000000-0000-0000-0000-000000000001",
 		Number:            "KIK-001",
 		RegionID:          "reg-001",
 		Status:            StatusPending,
@@ -153,7 +153,7 @@ func TestPostgresStore_Save(t *testing.T) {
 
 	cleanupOrders(t, db)
 
-	orderID := insertTestOrder(t, ctx, db, "ord-001", "KIK-001", "reg-001", 10000, 0, 1600, 11600, "USD")
+	orderID := insertTestOrder(t, ctx, db, "00000000-0000-0000-0000-000000000001", "KIK-001", "reg-001", 10000, 0, 1600, 11600, "USD")
 	insertTestOrderLine(t, ctx, db, orderID, "var-001", "SKU-001", 2, 5000, 0, 800, "USD")
 
 	order, err := store.Get(ctx, orderID)
@@ -204,7 +204,7 @@ func TestPostgresStore_RefundConstraint(t *testing.T) {
 
 	cleanupOrders(t, db)
 
-	orderID := insertTestOrder(t, ctx, db, "ord-001", "KIK-001", "reg-001", 10000, 0, 1600, 11600, "USD")
+	orderID := insertTestOrder(t, ctx, db, "00000000-0000-0000-0000-000000000001", "KIK-001", "reg-001", 10000, 0, 1600, 11600, "USD")
 	insertTestOrderLine(t, ctx, db, orderID, "var-001", "SKU-001", 2, 5000, 0, 800, "USD")
 
 	order, err := store.Get(ctx, orderID)
@@ -254,7 +254,7 @@ func TestPostgresStore_DuplicateOrderNumber(t *testing.T) {
 	cleanupOrders(t, db)
 
 	order1 := &Order{
-		ID:                "ord-001",
+		ID:                "00000000-0000-0000-0000-000000000001",
 		Number:            "KIK-001",
 		RegionID:          "reg-001",
 		Status:            StatusPending,
@@ -276,7 +276,7 @@ func TestPostgresStore_DuplicateOrderNumber(t *testing.T) {
 	}
 
 	order2 := &Order{
-		ID:                "ord-002",
+		ID:                "00000000-0000-0000-0000-000000000002",
 		Number:            "KIK-001",
 		RegionID:          "reg-001",
 		Status:            StatusPending,

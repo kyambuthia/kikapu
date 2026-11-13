@@ -21,7 +21,7 @@ $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS products_search_update ON products;
 CREATE TRIGGER products_search_update
-    BEFORE INSERT OR UPDATE ON products
+    BEFORE INSERT OR UPDATE OF name, slug ON products
     FOR EACH ROW
     EXECUTE FUNCTION update_product_search_tsvector();
 
@@ -37,9 +37,9 @@ BEGIN
         setweight(to_tsvector('english', COALESCE(p.name, '')), 'A') ||
         setweight(to_tsvector('english', COALESCE(p.slug, '')), 'B') ||
         setweight(
-            (SELECT to_tsvector('english', string_agg(COALESCE(v.sku, ''), ' '))
+            to_tsvector('english', COALESCE((SELECT string_agg(COALESCE(v.sku, ''), ' ')
              FROM variants v
-             WHERE v.product_id = p.id),
+             WHERE v.product_id = p.id), '')),
             'C'
         )
     WHERE p.id = COALESCE(NEW.product_id, OLD.product_id);

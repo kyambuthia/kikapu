@@ -21,7 +21,7 @@ func TestRun(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	migrationFile := filepath.Join(tmpDir, "0001_test.sql")
+	migrationFile := filepath.Join(tmpDir, "9998_test.sql")
 	content := `
 -- Test migration
 -- Why: Verify migration works
@@ -34,12 +34,12 @@ CREATE TABLE test_migration (
 
 INSERT INTO test_migration (name) VALUES ('test');
 
-CREATE TABLE schema_migrations (
+CREATE TABLE IF NOT EXISTS schema_migrations (
     version TEXT PRIMARY KEY,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-INSERT INTO schema_migrations (version) VALUES ('0001');
+INSERT INTO schema_migrations (version) VALUES ('9998') ON CONFLICT (version) DO NOTHING;
 `
 	if err := os.WriteFile(migrationFile, []byte(content), 0644); err != nil {
 		t.Fatalf("write migration file: %v", err)
@@ -69,7 +69,7 @@ INSERT INTO schema_migrations (version) VALUES ('0001');
 	if err != nil {
 		t.Logf("cleanup test_migration: %v", err)
 	}
-	_, err = db.Exec("DROP TABLE IF EXISTS schema_migrations CASCADE")
+	_, err = db.Exec("DELETE FROM schema_migrations WHERE version = '9998'")
 	if err != nil {
 		t.Logf("cleanup schema_migrations: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestRun_Idempotent(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	migrationFile := filepath.Join(tmpDir, "0001_test.sql")
+	migrationFile := filepath.Join(tmpDir, "9999_test.sql")
 	content := `
 -- Test migration
 -- Why: Verify idempotent migration
@@ -98,12 +98,12 @@ CREATE TABLE test_idempotent (
     value INT NOT NULL
 );
 
-CREATE TABLE schema_migrations (
+CREATE TABLE IF NOT EXISTS schema_migrations (
     version TEXT PRIMARY KEY,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-INSERT INTO schema_migrations (version) VALUES ('0001');
+INSERT INTO schema_migrations (version) VALUES ('9999') ON CONFLICT (version) DO NOTHING;
 `
 	if err := os.WriteFile(migrationFile, []byte(content), 0644); err != nil {
 		t.Fatalf("write migration file: %v", err)
@@ -143,7 +143,7 @@ INSERT INTO schema_migrations (version) VALUES ('0001');
 	if err != nil {
 		t.Logf("cleanup test_idempotent: %v", err)
 	}
-	_, err = db.Exec("DROP TABLE IF EXISTS schema_migrations CASCADE")
+	_, err = db.Exec("DELETE FROM schema_migrations WHERE version = '9999'")
 	if err != nil {
 		t.Logf("cleanup schema_migrations: %v", err)
 	}

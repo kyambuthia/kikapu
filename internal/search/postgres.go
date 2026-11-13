@@ -69,8 +69,8 @@ func (s *PostgresStore) Query(ctx context.Context, q string, filters Filters, pa
 		return nil, ErrInvalidLimit
 	}
 
-	var lastRank float64
-	var lastID string
+	var lastRank *float64
+	var lastID *string
 	if page.Cursor != "" {
 		decoded, err := base64.StdEncoding.DecodeString(page.Cursor)
 		if err != nil {
@@ -83,8 +83,8 @@ func (s *PostgresStore) Query(ctx context.Context, q string, filters Filters, pa
 		if err := json.Unmarshal(decoded, &cursor); err != nil {
 			return nil, ErrInvalidCursor
 		}
-		lastRank = cursor.Rank
-		lastID = cursor.ID
+		lastRank = &cursor.Rank
+		lastID = &cursor.ID
 	}
 
 	tsquery := "websearch_to_tsquery('english', $1)"
@@ -103,9 +103,9 @@ func (s *PostgresStore) Query(ctx context.Context, q string, filters Filters, pa
 		trgm_results AS (
 			SELECT 
 				p.id, p.slug, p.name, p.status,
-				similarity(p.name, $1) AS rank
+				word_similarity($1, p.name) AS rank
 			FROM products p
-			WHERE similarity(p.name, $1) > 0.3
+			WHERE word_similarity($1, p.name) > 0.3
 				AND ($2::text IS NULL OR p.status = $2)
 				AND p.id NOT IN (SELECT id FROM fts_results)
 			ORDER BY rank DESC, p.id
@@ -120,11 +120,16 @@ func (s *PostgresStore) Query(ctx context.Context, q string, filters Filters, pa
 		)
 		SELECT id, slug, name, status, rank
 		FROM combined
-		WHERE ($4::float IS NULL OR $5::text IS NULL OR rank < $4 OR (rank = $4 AND id > $5))
+		WHERE ($4::float IS NULL OR $5::text IS NULL OR rank < $4 OR (rank = $4 AND id::text > $5))
 		ORDER BY rank DESC, id
 	`, tsquery, tsquery)
 
-	rows, err := s.db.QueryContext(ctx, query, q, filters.Status, limit+1, lastRank, lastID)
+	var statusFilter any
+	if filters.Status != "" {
+		statusFilter = filters.Status
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, q, statusFilter, limit+1, lastRank, lastID)
 	if err != nil {
 		return nil, fmt.Errorf("search: query failed: %w", err)
 	}

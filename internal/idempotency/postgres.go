@@ -87,6 +87,10 @@ func (s *PostgresStore) Begin(ctx context.Context, key, requestHash string) (Rec
 		return Record{}, false, fmt.Errorf("idempotency: query: %w", err)
 	}
 
+	if _, err := tx.ExecContext(ctx, `DELETE FROM idempotency_records WHERE key_hash = $1 AND expires_at <= now()`, keyHash[:]); err != nil {
+		return Record{}, false, fmt.Errorf("idempotency: delete expired: %w", err)
+	}
+
 	now := time.Now()
 	insertQuery := `
 		INSERT INTO idempotency_records (key_hash, request_hash, status, created_at, expires_at)
@@ -96,52 +100,8 @@ func (s *PostgresStore) Begin(ctx context.Context, key, requestHash string) (Rec
 	_, err = tx.ExecContext(ctx, insertQuery, keyHash[:], reqHash[:], StatusPending, now, now.Add(s.ttl))
 	if err != nil {
 		if isUniqueViolation(err) {
-			var retryStatus string
-			var retryReqHash []byte
-			var retryRespStatus sql.NullInt32
-			var retryRespBody []byte
-			var retryCreated, retryExpires time.Time
-
-			retryQuery := `
-				SELECT request_hash, status, response_status, response_body, created_at, expires_at
-				FROM idempotency_records
-				WHERE key_hash = $1
-			`
-			err2 := tx.QueryRowContext(ctx, retryQuery, keyHash[:]).Scan(
-				&retryReqHash, &retryStatus, &retryRespStatus, &retryRespBody, &retryCreated, &retryExpires,
-			)
-			if err2 != nil {
-				return Record{}, false, fmt.Errorf("idempotency: retry query: %w", err2)
-			}
-
-			if string(reqHash[:]) != string(retryReqHash) {
-				return Record{}, false, ErrConflict
-			}
-
-			if retryStatus == string(StatusPending) {
-				if time.Since(retryCreated) > s.requestTimeout {
-					deleteQuery := `DELETE FROM idempotency_records WHERE key_hash = $1`
-					_, err := tx.ExecContext(ctx, deleteQuery, keyHash[:])
-					if err != nil {
-						return Record{}, false, fmt.Errorf("idempotency: delete timed out record (retry): %w", err)
-					}
-					if err := tx.Commit(); err != nil {
-						return Record{}, false, fmt.Errorf("idempotency: commit delete (retry): %w", err)
-					}
-					return s.Begin(ctx, key, requestHash)
-				}
-				return Record{}, false, ErrInFlight
-			}
-
-			rec := Record{
-				Key:         key,
-				RequestHash: requestHash,
-				Status:      int(retryRespStatus.Int32),
-				Response:    json.RawMessage(retryRespBody),
-				CreatedAt:   retryCreated,
-				ExpiresAt:   retryExpires,
-			}
-			return rec, true, nil
+			_ = tx.Rollback()
+			return s.Begin(ctx, key, requestHash)
 		}
 		return Record{}, false, fmt.Errorf("idempotency: insert pending: %w", err)
 	}

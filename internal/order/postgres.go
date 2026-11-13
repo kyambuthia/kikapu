@@ -20,7 +20,7 @@ func (s *PostgresStore) Get(ctx context.Context, id string) (*Order, error) {
 		SELECT id, number, region_id, status, payment_status, fulfillment_status,
 		       subtotal, discount, tax, grand_total, currency, created_at, updated_at
 		FROM orders
-		WHERE id = $1
+		WHERE id::text = $1
 	`
 
 	var o Order

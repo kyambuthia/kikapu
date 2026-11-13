@@ -190,11 +190,11 @@ func insertTestProduct(t *testing.T, ctx context.Context, db *sql.DB, slug, name
 	return id
 }
 
-func insertTestVariant(t *testing.T, ctx context.Context, db *sql.DB, productID, id, sku string, price int64, currency string) {
+func insertTestVariant(t *testing.T, ctx context.Context, db *sql.DB, productID, _, sku string, price int64, currency string) {
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO variants (id, product_id, sku, price, currency, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, id, productID, sku, price, currency, time.Now(), time.Now())
+		INSERT INTO variants (product_id, sku, price, currency, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, productID, sku, price, currency, time.Now(), time.Now())
 	if err != nil {
 		t.Fatalf("insert test variant: %v", err)
 	}
