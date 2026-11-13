@@ -67,12 +67,12 @@ func (d *Deliverer) Run(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			d.processBatch(ctx)
+			d.ProcessBatch(ctx)
 		}
 	}
 }
 
-func (d *Deliverer) processBatch(ctx context.Context) {
+func (d *Deliverer) ProcessBatch(ctx context.Context) {
 	records, err := d.outbox.Claim(ctx, 10)
 	if err != nil {
 		return
