@@ -12,13 +12,11 @@ CREATE TABLE IF NOT EXISTS carts (
     CHECK (version >= 1)
 );
 
-CREATE TABLE IF NOT EXISTS outbox_events (
+CREATE TABLE IF NOT EXISTS outbox (
     id TEXT PRIMARY KEY,
     event_type TEXT NOT NULL,
-    event_version INT NOT NULL DEFAULT 1,
     aggregate_id TEXT NOT NULL,
-    occurred_at TIMESTAMPTZ NOT NULL,
-    data JSONB NOT NULL,
+    event_data JSONB NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     attempts INT NOT NULL DEFAULT 0,
     next_attempt TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -28,7 +26,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     CHECK (status IN ('pending', 'sent', 'dead_letter'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_outbox_events_claim ON outbox_events(status, next_attempt, created_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_claim ON outbox(status, next_attempt, created_at);
 
 CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY,

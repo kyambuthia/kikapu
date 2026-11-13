@@ -20,6 +20,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/channel"
 	"github.com/kyambuthia/kikapu/internal/checkout"
+	"github.com/kyambuthia/kikapu/internal/events"
 	"github.com/kyambuthia/kikapu/internal/fulfillment"
 	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/migrate"
@@ -89,25 +90,19 @@ func main() {
 		return
 	}
 
-	eventOutbox := outbox.NewInMemoryOutbox()
-	subscriberStore := worker.NewInMemorySubscriberStore()
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-	deliverer := worker.NewDeliverer(httpClient, eventOutbox, subscriberStore)
-
-	if cfg.Mode == "worker" {
-		runWorker(logger, deliverer)
-		return
-	}
-
 	var (
 		db              *sql.DB
+		eventOutbox     events.Outbox
 		repo            catalog.Repository
+		cartStore       cart.Store
 		adminProducts   admin.ProductRepository
 		adminStock      admin.StockRepository
 		adminOrderStore admin.OrderLister
 		fulfillmentSvc  *fulfillment.Service
+		authStore       interface {
+			auth.KeyStore
+			Seed(name, rawKey string, scopes []string) (*auth.Key, error)
+		}
 	)
 
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
@@ -119,7 +114,9 @@ func main() {
 		}
 		defer db.Close()
 
+		eventOutbox = outbox.NewPostgresOutbox(db)
 		repo = catalog.NewPostgresStore(db)
+		cartStore = cart.NewPostgresStore(db)
 		adminProducts = admin.NewPostgresProductRepository(db)
 		adminStock = admin.NewPostgresStockRepository(db)
 		adminOrderStore = admin.NewPostgresOrderLister(db)
@@ -127,8 +124,29 @@ func main() {
 			fulfillment.NewPostgresRepository(db),
 			&orderFetcherAdapter{store: order.NewPostgresStore(db)},
 		)
+		authStore = auth.NewPostgresStore(db)
 		logger.Info("using PostgreSQL persistence")
 	} else {
+		eventOutbox = outbox.NewInMemoryOutbox()
+		cartStore = cart.NewInMemoryStore()
+		adminProducts = admin.NewMemoryProductRepository()
+		adminStock = admin.NewMemoryStockRepository()
+		adminOrderStore = admin.NewMemoryOrderLister()
+		authStore = auth.NewInMemoryStore()
+	}
+
+	subscriberStore := worker.NewInMemorySubscriberStore()
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	deliverer := worker.NewDeliverer(httpClient, eventOutbox, subscriberStore)
+
+	if cfg.Mode == "worker" {
+		runWorker(logger, deliverer)
+		return
+	}
+
+	if db == nil {
 		productData, err := os.ReadFile("internal/catalog/testdata/products.json")
 		if err != nil {
 			logger.Error("failed to read products data", "error", err)
@@ -147,16 +165,12 @@ func main() {
 		}
 
 		repo = catalog.NewInMemoryRepository(products)
-		adminProducts = admin.NewMemoryProductRepository()
-		adminStock = admin.NewMemoryStockRepository()
-		adminOrderStore = admin.NewMemoryOrderLister()
 		logger.Info("DATABASE_URL not set, using in-memory repositories")
 	}
 
 	regionRepo := region.NewInMemoryRepository(defaultRegions())
 	channelRepo := channel.NewInMemoryRepository(defaultChannels())
 
-	cartStore := cart.NewInMemoryStore()
 	inventoryStore := inventory.NewMemoryStore(nil)
 
 	paymentProvider, err := buildPaymentProvider(cfg)
@@ -191,7 +205,6 @@ func main() {
 		mpesaCallback = cbHandler
 	}
 
-	authStore := auth.NewInMemoryStore()
 	if adminKey := os.Getenv("KIKAPU_ADMIN_KEY"); adminKey != "" {
 		if _, err := authStore.Seed("bootstrap-admin", adminKey, []string{"admin"}); err != nil {
 			logger.Error("failed to seed admin API key", "error", err)
