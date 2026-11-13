@@ -44,11 +44,11 @@ Eight numbered, testable rules that define kikapu's correctness boundaries. Each
 
 **Statement**: An event exists iff the state change committed (outbox atomicity).
 
-**Enforcement**: missing (outbox not implemented - planned Phase 5)
+**Enforcement**: `internal/outbox/outbox_test.go`, `internal/checkout/checkout_test.go`
 
 **How to check**:
-- Review ROADMAP.md Phase 5 for planned implementation
-- Once implemented: event store and domain state in same transaction
+- `go test -race ./internal/outbox/... ./internal/worker/...`
+- Checkout records domain events into the outbox; worker deliverer claims and delivers with backoff
 
 ---
 
