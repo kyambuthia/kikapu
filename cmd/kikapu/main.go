@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -12,14 +13,17 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/kyambuthia/kikapu/internal/admin"
 	"github.com/kyambuthia/kikapu/internal/auth"
 	"github.com/kyambuthia/kikapu/internal/cart"
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/channel"
 	"github.com/kyambuthia/kikapu/internal/checkout"
+	"github.com/kyambuthia/kikapu/internal/fulfillment"
 	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/migrate"
+	"github.com/kyambuthia/kikapu/internal/order"
 	"github.com/kyambuthia/kikapu/internal/outbox"
 	"github.com/kyambuthia/kikapu/internal/payment"
 	"github.com/kyambuthia/kikapu/internal/payment/mpesa"
@@ -97,24 +101,55 @@ func main() {
 		return
 	}
 
-	productData, err := os.ReadFile("internal/catalog/testdata/products.json")
-	if err != nil {
-		logger.Error("failed to read products data", "error", err)
-		os.Exit(1)
+	var (
+		db             *sql.DB
+		repo           catalog.Repository
+		adminProducts  admin.ProductRepository
+		adminStock     admin.StockRepository
+		fulfillmentSvc *fulfillment.Service
+	)
+
+	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
+		var err error
+		db, err = openPostgres(databaseURL)
+		if err != nil {
+			logger.Error("failed to connect to database", "error", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+
+		repo = catalog.NewPostgresStore(db)
+		adminProducts = admin.NewPostgresProductRepository(db)
+		adminStock = admin.NewPostgresStockRepository(db)
+		fulfillmentSvc = fulfillment.NewService(
+			fulfillment.NewPostgresRepository(db),
+			&orderFetcherAdapter{store: order.NewPostgresStore(db)},
+		)
+		logger.Info("using PostgreSQL persistence")
+	} else {
+		productData, err := os.ReadFile("internal/catalog/testdata/products.json")
+		if err != nil {
+			logger.Error("failed to read products data", "error", err)
+			os.Exit(1)
+		}
+
+		products, err := catalog.LoadProductsFromJSON(productData)
+		if err != nil {
+			logger.Error("failed to load products", "error", err)
+			os.Exit(1)
+		}
+
+		if err := catalog.ValidateProducts(products); err != nil {
+			logger.Error("invalid products data", "error", err)
+			os.Exit(1)
+		}
+
+		repo = catalog.NewInMemoryRepository(products)
+		adminProducts = admin.NewMemoryProductRepository()
+		adminStock = admin.NewMemoryStockRepository()
+		logger.Info("DATABASE_URL not set, using in-memory repositories")
 	}
 
-	products, err := catalog.LoadProductsFromJSON(productData)
-	if err != nil {
-		logger.Error("failed to load products", "error", err)
-		os.Exit(1)
-	}
-
-	if err := catalog.ValidateProducts(products); err != nil {
-		logger.Error("invalid products data", "error", err)
-		os.Exit(1)
-	}
-
-	repo := catalog.NewInMemoryRepository(products)
 	regionRepo := region.NewInMemoryRepository(defaultRegions())
 	channelRepo := channel.NewInMemoryRepository(defaultChannels())
 
@@ -154,13 +189,15 @@ func main() {
 	}
 
 	mux := buildAPIMux(apiDeps{
+		db:              db,
 		catalogRepo:     repo,
 		regionRepo:      regionRepo,
 		channelRepo:     channelRepo,
 		cartStore:       cartStore,
 		checkoutSvc:     checkoutSvc,
-		adminProducts:   admin.NewMemoryProductRepository(),
-		adminStock:      admin.NewMemoryStockRepository(),
+		adminProducts:   adminProducts,
+		adminStock:      adminStock,
+		fulfillmentSvc:  fulfillmentSvc,
 		authStore:       auth.NewInMemoryStore(),
 		paystackWebhook: paystackWebhook,
 		mpesaCallback:   mpesaCallback,
@@ -241,6 +278,7 @@ func buildPaymentProvider(cfg *config.Config) (payment.Provider, error) {
 }
 
 type apiDeps struct {
+	db              *sql.DB
 	catalogRepo     catalog.Repository
 	regionRepo      region.Repository
 	channelRepo     channel.Repository
@@ -248,6 +286,7 @@ type apiDeps struct {
 	checkoutSvc     *checkout.Service
 	adminProducts   admin.ProductRepository
 	adminStock      admin.StockRepository
+	fulfillmentSvc  *fulfillment.Service
 	authStore       auth.KeyStore
 	paystackWebhook http.Handler
 	mpesaCallback   http.Handler
@@ -262,7 +301,11 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 	routes.NewCartHandler(deps.cartStore, deps.checkoutSvc).RegisterRoutes(mux)
 
 	if deps.adminProducts != nil && deps.adminStock != nil {
-		admin.NewHandler(deps.adminProducts, deps.adminStock).RegisterRoutes(mux)
+		adminHandler := admin.NewHandler(deps.adminProducts, deps.adminStock)
+		if deps.fulfillmentSvc != nil {
+			adminHandler.SetFulfillmentService(deps.fulfillmentSvc)
+		}
+		adminHandler.RegisterRoutes(mux)
 	}
 
 	if deps.authStore != nil {
@@ -297,6 +340,14 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 	})
 
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if deps.db != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			defer cancel()
+			if err := deps.db.PingContext(ctx); err != nil {
+				httpx.WriteError(w, http.StatusServiceUnavailable, "not_ready", "database unavailable", httpx.RequestID(r))
+				return
+			}
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -308,6 +359,43 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 	})
 
 	return mux
+}
+
+func openPostgres(databaseURL string) (*sql.DB, error) {
+	db, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+type orderFetcherAdapter struct {
+	store *order.PostgresStore
+}
+
+func (a *orderFetcherAdapter) Get(ctx context.Context, id string) (*fulfillment.OrderInfo, error) {
+	o, err := a.store.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	lines := make([]fulfillment.OrderLine, 0, len(o.Lines))
+	for _, l := range o.Lines {
+		lines = append(lines, fulfillment.OrderLine{
+			VariantID: l.VariantID,
+			Quantity:  l.Quantity,
+		})
+	}
+	return &fulfillment.OrderInfo{
+		ID:     o.ID,
+		Status: string(o.Status),
+		Lines:  lines,
+	}, nil
 }
 
 func parseCSV(raw string) []string {
