@@ -102,11 +102,12 @@ func main() {
 	}
 
 	var (
-		db             *sql.DB
-		repo           catalog.Repository
-		adminProducts  admin.ProductRepository
-		adminStock     admin.StockRepository
-		fulfillmentSvc *fulfillment.Service
+		db              *sql.DB
+		repo            catalog.Repository
+		adminProducts   admin.ProductRepository
+		adminStock      admin.StockRepository
+		adminOrderStore admin.OrderLister
+		fulfillmentSvc  *fulfillment.Service
 	)
 
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
@@ -121,6 +122,7 @@ func main() {
 		repo = catalog.NewPostgresStore(db)
 		adminProducts = admin.NewPostgresProductRepository(db)
 		adminStock = admin.NewPostgresStockRepository(db)
+		adminOrderStore = admin.NewPostgresOrderLister(db)
 		fulfillmentSvc = fulfillment.NewService(
 			fulfillment.NewPostgresRepository(db),
 			&orderFetcherAdapter{store: order.NewPostgresStore(db)},
@@ -147,6 +149,7 @@ func main() {
 		repo = catalog.NewInMemoryRepository(products)
 		adminProducts = admin.NewMemoryProductRepository()
 		adminStock = admin.NewMemoryStockRepository()
+		adminOrderStore = admin.NewMemoryOrderLister()
 		logger.Info("DATABASE_URL not set, using in-memory repositories")
 	}
 
@@ -197,6 +200,7 @@ func main() {
 		checkoutSvc:     checkoutSvc,
 		adminProducts:   adminProducts,
 		adminStock:      adminStock,
+		adminOrderStore: adminOrderStore,
 		fulfillmentSvc:  fulfillmentSvc,
 		authStore:       auth.NewInMemoryStore(),
 		paystackWebhook: paystackWebhook,
@@ -286,6 +290,7 @@ type apiDeps struct {
 	checkoutSvc     *checkout.Service
 	adminProducts   admin.ProductRepository
 	adminStock      admin.StockRepository
+	adminOrderStore admin.OrderLister
 	fulfillmentSvc  *fulfillment.Service
 	authStore       auth.KeyStore
 	paystackWebhook http.Handler
@@ -302,6 +307,9 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 
 	if deps.adminProducts != nil && deps.adminStock != nil {
 		adminHandler := admin.NewHandler(deps.adminProducts, deps.adminStock)
+		if deps.adminOrderStore != nil {
+			adminHandler.SetOrderStore(deps.adminOrderStore)
+		}
 		if deps.fulfillmentSvc != nil {
 			adminHandler.SetFulfillmentService(deps.fulfillmentSvc)
 		}

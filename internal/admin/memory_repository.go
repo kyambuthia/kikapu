@@ -2,7 +2,9 @@ package admin
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"sort"
 	"sync"
 	"time"
 
@@ -342,4 +344,79 @@ func (r *MemoryStockRepository) UpdateLevel(ctx context.Context, variantID, loca
 	level.OnHand = newOnHand
 
 	return level, nil
+}
+
+type MemoryOrderLister struct {
+	mu     sync.RWMutex
+	orders map[string]Order
+}
+
+func NewMemoryOrderLister(orders ...Order) *MemoryOrderLister {
+	m := make(map[string]Order, len(orders))
+	for _, o := range orders {
+		m[o.ID] = o
+	}
+	return &MemoryOrderLister{orders: m}
+}
+
+func (l *MemoryOrderLister) List(ctx context.Context, opts OrderListOptions) ([]Order, string, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+
+	result := make([]Order, 0, len(l.orders))
+	for _, o := range l.orders {
+		if opts.Status != "" && o.Status != opts.Status {
+			continue
+		}
+		if !opts.From.IsZero() && o.CreatedAt.Before(opts.From) {
+			continue
+		}
+		if !opts.To.IsZero() && o.CreatedAt.After(opts.To) {
+			continue
+		}
+		result = append(result, o)
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID < result[j].ID
+	})
+
+	start := 0
+	if opts.Cursor != "" {
+		for i, o := range result {
+			if o.ID > opts.Cursor {
+				start = i
+				break
+			}
+			start = len(result)
+		}
+	}
+
+	end := start + limit
+	if end > len(result) {
+		end = len(result)
+	}
+
+	var nextCursor string
+	if end < len(result) {
+		nextCursor = result[end-1].ID
+	}
+
+	return result[start:end], nextCursor, nil
+}
+
+func (l *MemoryOrderLister) Get(ctx context.Context, id string) (*Order, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	o, ok := l.orders[id]
+	if !ok {
+		return nil, sql.ErrNoRows
+	}
+	return &o, nil
 }

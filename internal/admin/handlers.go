@@ -55,6 +55,10 @@ func (h *Handler) SetFulfillmentService(svc *fulfillment.Service) {
 	h.fulfillmentSvc = svc
 }
 
+func (h *Handler) SetOrderStore(store OrderLister) {
+	h.orderStore = store
+}
+
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/admin/products", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

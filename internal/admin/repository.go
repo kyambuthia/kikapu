@@ -596,3 +596,93 @@ func isUniqueViolation(err error) bool {
 		strings.Contains(err.Error(), "duplicate key") ||
 		strings.Contains(err.Error(), "UNIQUE constraint"))
 }
+
+type PostgresOrderLister struct {
+	db *sql.DB
+}
+
+func NewPostgresOrderLister(db *sql.DB) *PostgresOrderLister {
+	return &PostgresOrderLister{db: db}
+}
+
+func (l *PostgresOrderLister) List(ctx context.Context, opts OrderListOptions) ([]Order, string, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var (
+		conditions []string
+		args       []interface{}
+		argIdx     = 1
+	)
+	if opts.Status != "" {
+		conditions = append(conditions, fmt.Sprintf("status = $%d", argIdx))
+		args = append(args, opts.Status)
+		argIdx++
+	}
+	if !opts.From.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", argIdx))
+		args = append(args, opts.From)
+		argIdx++
+	}
+	if !opts.To.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("created_at <= $%d", argIdx))
+		args = append(args, opts.To)
+		argIdx++
+	}
+	if opts.Cursor != "" {
+		conditions = append(conditions, fmt.Sprintf("id > $%d", argIdx))
+		args = append(args, opts.Cursor)
+		argIdx++
+	}
+
+	query := "SELECT id, number, status, payment_status, fulfillment_status, created_at, updated_at FROM orders"
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += fmt.Sprintf(" ORDER BY id LIMIT $%d", argIdx)
+	args = append(args, limit+1)
+
+	rows, err := l.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("admin: list orders: %w", err)
+	}
+	defer rows.Close()
+
+	orders := make([]Order, 0, limit)
+	for rows.Next() {
+		var o Order
+		if err := rows.Scan(&o.ID, &o.Number, &o.Status, &o.PaymentStatus, &o.FulfillmentStatus, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			return nil, "", fmt.Errorf("admin: scan order: %w", err)
+		}
+		orders = append(orders, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("admin: iterate orders: %w", err)
+	}
+
+	var nextCursor string
+	if len(orders) > limit {
+		orders = orders[:limit]
+		nextCursor = orders[limit-1].ID
+	}
+
+	return orders, nextCursor, nil
+}
+
+func (l *PostgresOrderLister) Get(ctx context.Context, id string) (*Order, error) {
+	query := `
+		SELECT id, number, status, payment_status, fulfillment_status, created_at, updated_at
+		FROM orders
+		WHERE id = $1
+	`
+	var o Order
+	err := l.db.QueryRowContext(ctx, query, id).Scan(
+		&o.ID, &o.Number, &o.Status, &o.PaymentStatus, &o.FulfillmentStatus, &o.CreatedAt, &o.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &o, nil
+}

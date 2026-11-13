@@ -32,14 +32,15 @@ func TestBuildAPIMux_CoreEndpoints(t *testing.T) {
 	)
 
 	mux := buildAPIMux(apiDeps{
-		catalogRepo:   repo,
-		regionRepo:    regionRepo,
-		channelRepo:   channelRepo,
-		cartStore:     cartStore,
-		checkoutSvc:   checkoutSvc,
-		adminProducts: admin.NewMemoryProductRepository(),
-		adminStock:    admin.NewMemoryStockRepository(),
-		authStore:     auth.NewInMemoryStore(),
+		catalogRepo:     repo,
+		regionRepo:      regionRepo,
+		channelRepo:     channelRepo,
+		cartStore:       cartStore,
+		checkoutSvc:     checkoutSvc,
+		adminProducts:   admin.NewMemoryProductRepository(),
+		adminStock:      admin.NewMemoryStockRepository(),
+		adminOrderStore: admin.NewMemoryOrderLister(),
+		authStore:       auth.NewInMemoryStore(),
 	})
 
 	tests := []struct {
@@ -56,6 +57,7 @@ func TestBuildAPIMux_CoreEndpoints(t *testing.T) {
 		{name: "channels", method: http.MethodGet, path: "/v1/channels", want: http.StatusOK},
 		{name: "products", method: http.MethodGet, path: "/v1/products", want: http.StatusOK},
 		{name: "admin products", method: http.MethodGet, path: "/v1/admin/products", want: http.StatusOK},
+		{name: "admin orders", method: http.MethodGet, path: "/v1/admin/orders", want: http.StatusOK},
 		{name: "auth keys", method: http.MethodGet, path: "/v1/auth/keys", want: http.StatusOK},
 	}
 
