@@ -154,7 +154,12 @@ func main() {
 		authStore = auth.NewInMemoryStore()
 	}
 
-	subscriberStore := worker.NewInMemorySubscriberStore()
+	var subscriberStore worker.SubscriberStore
+	if db != nil {
+		subscriberStore = worker.NewPostgresSubscriberStore(db)
+	} else {
+		subscriberStore = worker.NewInMemorySubscriberStore()
+	}
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
 	}
@@ -188,10 +193,22 @@ func main() {
 		logger.Info("DATABASE_URL not set, using in-memory repositories")
 	}
 
-	regionRepo := region.NewInMemoryRepository(defaultRegions())
-	channelRepo := channel.NewInMemoryRepository(defaultChannels())
+	var regionRepo region.Repository
+	var channelRepo channel.Repository
+	var inventoryStore inventory.Store
+	var idempotencyStore checkout.OrderStore
 
-	inventoryStore := inventory.NewMemoryStore(nil)
+	if db != nil {
+		regionRepo = region.NewPostgresRepository(db)
+		channelRepo = channel.NewPostgresRepository(db)
+		inventoryStore = inventory.NewPostgresStore(db, nil)
+		idempotencyStore = checkout.NewPostgresOrderStore(db)
+	} else {
+		regionRepo = region.NewInMemoryRepository(defaultRegions())
+		channelRepo = channel.NewInMemoryRepository(defaultChannels())
+		inventoryStore = inventory.NewMemoryStore(nil)
+		idempotencyStore = checkout.NewIdempotencyStore()
+	}
 
 	paymentProvider, err := buildPaymentProvider(cfg)
 	if err != nil {
@@ -199,7 +216,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	idempotencyStore := checkout.NewIdempotencyStore()
 	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
