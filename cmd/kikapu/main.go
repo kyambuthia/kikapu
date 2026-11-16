@@ -225,15 +225,26 @@ func main() {
 		deliverer.Run(workerCtx, 5*time.Second)
 	}()
 
+	var paystackStore paystack.EventStore = paystack.NewInMemoryEventStore()
+	var mpesaStore mpesa.CallbackStore = mpesa.NewInMemoryCallbackStore()
+	if db != nil {
+		paystackStore = paystack.NewPostgresEventStore(db)
+		mpesaStore = mpesa.NewPostgresCallbackStore(db)
+	}
+
 	var paystackWebhook http.Handler
 	if psClient, ok := paymentProvider.(*paystack.Client); ok {
-		paystackWebhook = paystack.NewWebhookHandler(psClient, paystack.NewInMemoryEventStore(), logger)
+		psHandler := paystack.NewWebhookHandler(psClient, paystackStore, logger)
+		if reconciler, ok := idempotencyStore.(paystack.PaymentReconciler); ok {
+			psHandler.SetReconciler(reconciler)
+		}
+		paystackWebhook = psHandler
 	}
 
 	var mpesaCallback http.Handler
 	if cfg.PaymentProvider == "mpesa" || cfg.MpesaAllowedCIDRs != "" {
 		cbHandler, err := mpesa.NewCallbackHandlerWithProxy(
-			mpesa.NewInMemoryCallbackStore(),
+			mpesaStore,
 			parseCSV(cfg.MpesaAllowedCIDRs),
 			logger,
 			cfg.Env == "production",
@@ -242,6 +253,9 @@ func main() {
 		if err != nil {
 			logger.Error("failed to create M-Pesa callback handler", "error", err)
 			os.Exit(1)
+		}
+		if reconciler, ok := idempotencyStore.(mpesa.PaymentReconciler); ok {
+			cbHandler.SetReconciler(reconciler)
 		}
 		mpesaCallback = cbHandler
 	}

@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha512"
 	"encoding/hex"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -84,10 +85,20 @@ func (s *InMemoryEventStore) SaveEvent(event *ProcessedEvent) error {
 
 const maxWebhookBodyBytes = 1 << 20 // 1 MiB
 
+// PaymentReconciler updates downstream order state when a webhook settles.
+type PaymentReconciler interface {
+	ReconcilePayment(ctx context.Context, paymentID string, state payment.State) error
+}
+
 type WebhookHandler struct {
 	client     *Client
 	eventStore EventStore
+	reconciler PaymentReconciler
 	logger     *slog.Logger
+}
+
+func (h *WebhookHandler) SetReconciler(r PaymentReconciler) {
+	h.reconciler = r
 }
 
 func NewWebhookHandler(client *Client, eventStore EventStore, logger *slog.Logger) *WebhookHandler {
@@ -182,7 +193,7 @@ func (h *WebhookHandler) processEvent(r *http.Request, event *WebhookPayload) er
 
 	switch event.Event {
 	case "charge.success":
-		h.handleChargeSuccess(event, requestID)
+		h.handleChargeSuccess(r.Context(), event, requestID)
 	default:
 		h.logger.Info("ignoring unknown webhook event type",
 			"event_type", event.Event,
@@ -193,7 +204,7 @@ func (h *WebhookHandler) processEvent(r *http.Request, event *WebhookPayload) er
 	return nil
 }
 
-func (h *WebhookHandler) handleChargeSuccess(event *WebhookPayload, requestID string) {
+func (h *WebhookHandler) handleChargeSuccess(ctx context.Context, event *WebhookPayload, requestID string) {
 	state := mapPaystackStatus(event.Data.Status)
 
 	processed := &ProcessedEvent{
@@ -212,6 +223,16 @@ func (h *WebhookHandler) handleChargeSuccess(event *WebhookPayload, requestID st
 		State:     state,
 		Timestamp: event.Data.ID,
 	})
+
+	if h.reconciler != nil {
+		if err := h.reconciler.ReconcilePayment(ctx, event.Data.Reference, state); err != nil {
+			h.logger.Error("failed to reconcile paystack payment",
+				"reference", event.Data.Reference,
+				"error", err,
+				"request_id", requestID,
+			)
+		}
+	}
 
 	h.logger.Info("charge success webhook processed",
 		"reference", event.Data.Reference,

@@ -2,6 +2,7 @@ package mpesa
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -380,5 +381,39 @@ func TestCallbackHandler_RejectsOversizedBody(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d for oversized payload", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+type stubReconciler struct {
+	called    bool
+	paymentID string
+	state     payment.State
+}
+
+func (r *stubReconciler) ReconcilePayment(_ context.Context, paymentID string, state payment.State) error {
+	r.called = true
+	r.paymentID = paymentID
+	r.state = state
+	return nil
+}
+
+func TestCallbackHandler_InvokesReconciler(t *testing.T) {
+	handler, err := NewCallbackHandler(NewInMemoryCallbackStore(), nil, slog.Default(), false)
+	if err != nil {
+		t.Fatalf("NewCallbackHandler() error = %v", err)
+	}
+	rec := &stubReconciler{}
+	handler.SetReconciler(rec)
+
+	payload := []byte(`{"Body":{"stkCallback":{"MerchantRequestID":"m1","CheckoutRequestID":"chk_999","ResultCode":0,"ResultDesc":"ok"}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/mpesa", bytes.NewReader(payload))
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if !rec.called || rec.paymentID != "chk_999" || rec.state != payment.StateCaptured {
+		t.Fatalf("reconciler = %+v, want called=true paymentID=chk_999 state=captured", rec)
 	}
 }

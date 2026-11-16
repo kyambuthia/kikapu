@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kyambuthia/kikapu/internal/events"
+	"github.com/kyambuthia/kikapu/internal/payment"
 )
 
 // PostgresOrderStore implements OrderStore and TransactionalOrderStore backed by PostgreSQL.
@@ -130,4 +131,22 @@ func (s *PostgresOrderStore) scanOrder(ctx context.Context, query string, arg an
 		o.Reservations = []string{}
 	}
 	return &o, nil
+}
+
+// ReconcilePayment updates the checkout order status matching paymentID when an
+// asynchronous payment webhook or callback reports a terminal payment state.
+func (s *PostgresOrderStore) ReconcilePayment(ctx context.Context, paymentID string, state payment.State) error {
+	if paymentID == "" {
+		return nil
+	}
+	targetStatus := mapPaymentStateToOrderStatus(state)
+	if targetStatus == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE checkout_orders
+		SET status = $1, updated_at = $2
+		WHERE payment_id = $3 AND status <> $4
+	`, string(targetStatus), time.Now().UTC(), paymentID, string(OrderStatusPaymentCapturedFulfilmentFailed))
+	return err
 }

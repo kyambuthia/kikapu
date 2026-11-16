@@ -302,3 +302,37 @@ func (s *Service) releaseAll(ctx context.Context, reservations []string) {
 func (s *Service) GetOrder(orderID string) (*Order, error) {
 	return s.idempotency.GetOrder(orderID)
 }
+
+// ReconcilePayment updates an order's status from an asynchronous payment webhook/callback.
+func (s *IdempotencyStore) ReconcilePayment(_ context.Context, paymentID string, state payment.State) error {
+	if paymentID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	targetStatus := mapPaymentStateToOrderStatus(state)
+	if targetStatus == "" {
+		return nil
+	}
+	for _, o := range s.orders {
+		if o.PaymentID == paymentID && o.Status != OrderStatusPaymentCapturedFulfilmentFailed {
+			o.Status = targetStatus
+			o.UpdatedAt = time.Now().UTC()
+		}
+	}
+	return nil
+}
+
+func mapPaymentStateToOrderStatus(state payment.State) OrderStatus {
+	switch state {
+	case payment.StateCaptured:
+		return OrderStatusPaid
+	case payment.StateFailed:
+		return OrderStatusFailed
+	case payment.StateRefunded:
+		return OrderStatusCancelled
+	default:
+		return ""
+	}
+}

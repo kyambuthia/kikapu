@@ -1,6 +1,7 @@
 package mpesa
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,13 +95,23 @@ func callbackKey(checkoutRequestID string, resultCode int) string {
 
 const maxCallbackBodyBytes = 1 << 20 // 1 MiB
 
+// PaymentReconciler updates downstream order state when an M-Pesa callback arrives.
+type PaymentReconciler interface {
+	ReconcilePayment(ctx context.Context, paymentID string, state payment.State) error
+}
+
 type CallbackHandler struct {
 	store        CallbackStore
+	reconciler   PaymentReconciler
 	allowedCIDRs []string
 	networks     []*net.IPNet
 	logger       *slog.Logger
 	production   bool
 	trustProxy   bool
+}
+
+func (h *CallbackHandler) SetReconciler(r PaymentReconciler) {
+	h.reconciler = r
 }
 
 func NewCallbackHandler(store CallbackStore, allowedCIDRs []string, logger *slog.Logger, production bool) (*CallbackHandler, error) {
@@ -214,6 +225,16 @@ func (h *CallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.SaveCallback(processed); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "save_error", "failed to save callback", requestID)
 		return
+	}
+
+	if h.reconciler != nil {
+		if err := h.reconciler.ReconcilePayment(r.Context(), processed.CheckoutRequestID, processed.State); err != nil {
+			h.logger.Error("failed to reconcile mpesa callback",
+				"checkout_request_id", processed.CheckoutRequestID,
+				"error", err,
+				"request_id", requestID,
+			)
+		}
 	}
 
 	h.logger.Info("callback processed",
