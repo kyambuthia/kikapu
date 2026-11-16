@@ -378,7 +378,7 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 	routes.NewCatalogHandlerWithFilters(deps.catalogRepo, deps.regionRepo, deps.channelRepo).RegisterRoutes(mux)
 	routes.NewRegionHandler(deps.regionRepo).RegisterRoutes(mux)
 	routes.NewChannelHandler(deps.channelRepo).RegisterRoutes(mux)
-	routes.NewCartHandler(deps.cartStore, deps.checkoutSvc).RegisterRoutes(mux)
+	routes.NewCartHandler(deps.cartStore, deps.checkoutSvc, deps.catalogRepo).RegisterRoutes(mux)
 	if deps.searchStore != nil {
 		routes.NewSearchHandler(deps.searchStore).RegisterRoutes(mux)
 	}

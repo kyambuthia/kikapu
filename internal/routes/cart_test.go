@@ -8,10 +8,12 @@ import (
 	"testing"
 
 	"github.com/kyambuthia/kikapu/internal/cart"
+	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/outbox"
 	"github.com/kyambuthia/kikapu/internal/payment"
+	"github.com/kyambuthia/kikapu/internal/platform/money"
 )
 
 func setupCartHandler() *CartHandler {
@@ -25,7 +27,20 @@ func setupCartHandler() *CartHandler {
 	inventoryStore.SetLevel("var001", "loc1", 100)
 	inventoryStore.SetLevel("var002", "loc1", 100)
 
-	return NewCartHandler(cartStore, checkoutSvc)
+	catalogRepo := catalog.NewInMemoryRepository([]catalog.Product{
+		{
+			ID:     "prod001",
+			Slug:   "wireless-mouse",
+			Name:   "Wireless Mouse",
+			Status: "published",
+			Variants: []catalog.Variant{
+				{ID: "var001", SKU: "WM-BLK-001", Price: money.NewAmount(2999, "USD"), Currency: "USD"},
+				{ID: "var002", SKU: "WM-WHT-001", Price: money.NewAmount(3499, "USD"), Currency: "USD"},
+			},
+		},
+	})
+
+	return NewCartHandler(cartStore, checkoutSvc, catalogRepo)
 }
 
 func TestCartHandler_CreateCart(t *testing.T) {
@@ -67,7 +82,7 @@ func TestCartHandler_AddItem(t *testing.T) {
 	var c cart.Cart
 	json.Unmarshal(w.Body.Bytes(), &c)
 
-	addBody := AddItemRequest{VariantID: "var001", Quantity: 2, UnitPrice: 1000}
+	addBody := AddItemRequest{VariantID: "var001", Quantity: 2}
 	jsonBody, _ = json.Marshal(addBody)
 	req = httptest.NewRequest("POST", "/v1/carts/"+c.ID+"/items", bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -104,7 +119,7 @@ func TestCartHandler_Checkout(t *testing.T) {
 	var c cart.Cart
 	json.Unmarshal(w.Body.Bytes(), &c)
 
-	addBody := AddItemRequest{VariantID: "var001", Quantity: 2, UnitPrice: 1000}
+	addBody := AddItemRequest{VariantID: "var001", Quantity: 2}
 	jsonBody, _ = json.Marshal(addBody)
 	req = httptest.NewRequest("POST", "/v1/carts/"+c.ID+"/items", bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -164,7 +179,7 @@ func TestCartHandler_Checkout_Idempotency(t *testing.T) {
 	var c cart.Cart
 	json.Unmarshal(w.Body.Bytes(), &c)
 
-	addBody := AddItemRequest{VariantID: "var001", Quantity: 2, UnitPrice: 1000}
+	addBody := AddItemRequest{VariantID: "var001", Quantity: 2}
 	jsonBody, _ = json.Marshal(addBody)
 	req = httptest.NewRequest("POST", "/v1/carts/"+c.ID+"/items", bytes.NewReader(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -195,5 +210,53 @@ func TestCartHandler_Checkout_Idempotency(t *testing.T) {
 
 	if resp1.OrderID != resp2.OrderID {
 		t.Errorf("Idempotency failed: got different order IDs %s and %s", resp1.OrderID, resp2.OrderID)
+	}
+}
+
+func TestCartHandler_AddItem_UsesServerPriceAndRejectsUnknownVariant(t *testing.T) {
+	handler := setupCartHandler()
+
+	createBody := CreateCartRequest{Currency: "USD"}
+	jsonBody, _ := json.Marshal(createBody)
+	req := httptest.NewRequest("POST", "/v1/carts", bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.CreateCart(w, req)
+
+	var c cart.Cart
+	if err := json.Unmarshal(w.Body.Bytes(), &c); err != nil {
+		t.Fatalf("Failed to unmarshal cart: %v", err)
+	}
+
+	// Client attempts to spoof unit_price=1 in JSON payload; server must ignore it.
+	spoofPayload := []byte(`{"variant_id":"var001","quantity":2,"unit_price":1}`)
+	req = httptest.NewRequest("POST", "/v1/carts/"+c.ID+"/items", bytes.NewReader(spoofPayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", c.ID)
+	w = httptest.NewRecorder()
+	handler.AddItem(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("AddItem() status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var updated cart.Cart
+	if err := json.Unmarshal(w.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("Failed to unmarshal updated cart: %v", err)
+	}
+	if len(updated.Lines) != 1 || updated.Lines[0].UnitPrice.Value != 2999 {
+		t.Fatalf("UnitPrice = %+v, want canonical 2999", updated.Lines)
+	}
+
+	// Unknown variant must return 404.
+	missingPayload := []byte(`{"variant_id":"var999","quantity":1}`)
+	req = httptest.NewRequest("POST", "/v1/carts/"+c.ID+"/items", bytes.NewReader(missingPayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", c.ID)
+	w = httptest.NewRecorder()
+	handler.AddItem(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("AddItem(unknown variant) status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 }

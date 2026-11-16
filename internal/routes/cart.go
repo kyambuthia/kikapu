@@ -1,26 +1,32 @@
 package routes
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/kyambuthia/kikapu/internal/cart"
+	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/money"
 )
 
+var errVariantNotFound = errors.New("variant not found")
+
 type CartHandler struct {
 	store    cart.Store
 	checkout *checkout.Service
+	catalog  catalog.Repository
 }
 
-func NewCartHandler(store cart.Store, checkoutSvc *checkout.Service) *CartHandler {
+func NewCartHandler(store cart.Store, checkoutSvc *checkout.Service, catalogRepo catalog.Repository) *CartHandler {
 	return &CartHandler{
 		store:    store,
 		checkout: checkoutSvc,
+		catalog:  catalogRepo,
 	}
 }
 
@@ -28,10 +34,11 @@ type CreateCartRequest struct {
 	Currency string `json:"currency"`
 }
 
+// AddItemRequest intentionally omits unit_price; prices are resolved
+// server-side from the catalog so clients cannot tamper with line totals.
 type AddItemRequest struct {
 	VariantID string `json:"variant_id"`
 	Quantity  int    `json:"quantity"`
-	UnitPrice int64  `json:"unit_price"`
 }
 
 type UpdateItemRequest struct {
@@ -127,6 +134,11 @@ func (h *CartHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.VariantID == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "variant_id is required", httpx.RequestID(r))
+		return
+	}
+
 	c, err := h.store.Get(id)
 	if err != nil {
 		if errors.Is(err, cart.ErrCartNotFound) {
@@ -137,7 +149,17 @@ func (h *CartHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	version, err := c.AddItem(req.VariantID, req.Quantity, money.NewAmount(req.UnitPrice, c.Currency))
+	unitPrice, err := h.lookupVariantPrice(r.Context(), req.VariantID)
+	if err != nil {
+		if errors.Is(err, errVariantNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "variant_not_found", "variant not found", httpx.RequestID(r))
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to resolve variant price", httpx.RequestID(r))
+		return
+	}
+
+	version, err := c.AddItem(req.VariantID, req.Quantity, unitPrice)
 	if err != nil {
 		if errors.Is(err, cart.ErrInvalidQuantity) {
 			httpx.WriteError(w, http.StatusBadRequest, "invalid_quantity", err.Error(), httpx.RequestID(r))
@@ -159,6 +181,45 @@ func (h *CartHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, c)
+}
+
+// lookupVariantPrice scans catalog pages for variantID and returns its
+// canonical unit price. Keeping lookup in the handler avoids expanding
+// catalog.Repository until a direct GetByVariantID query is needed.
+func (h *CartHandler) lookupVariantPrice(ctx context.Context, variantID string) (money.Amount, error) {
+	if h.catalog == nil {
+		return money.Amount{}, errVariantNotFound
+	}
+
+	var cursor string
+	for {
+		products, nextCursor, err := h.catalog.List(ctx, catalog.ListOptions{
+			Limit:  catalog.MaxLimit,
+			Cursor: cursor,
+		})
+		if err != nil {
+			return money.Amount{}, err
+		}
+
+		for _, p := range products {
+			for _, v := range p.Variants {
+				if v.ID == variantID {
+					price := v.Price
+					if price.Currency == "" {
+						price = money.NewAmount(price.Value, v.Currency)
+					}
+					return price, nil
+				}
+			}
+		}
+
+		if nextCursor == "" {
+			break
+		}
+		cursor = nextCursor
+	}
+
+	return money.Amount{}, errVariantNotFound
 }
 
 func (h *CartHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
