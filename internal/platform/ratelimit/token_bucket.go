@@ -34,15 +34,36 @@ func (b *Bucket) Allow() bool {
 }
 
 type Limiter struct {
-	mu      sync.Mutex
-	buckets map[string]*Bucket
-	size    int
+	mu           sync.Mutex
+	buckets      map[string]*Bucket
+	size         int
+	burst        uint64
+	refillAmount uint64
+	interval     time.Duration
 }
 
 func NewLimiter(size int) *Limiter {
+	return NewLimiterWithRate(size, refillTokens, refillTokens, refillInterval)
+}
+
+// NewLimiterWithRate creates a token-bucket limiter allowing up to burst
+// requests immediately and replenishing refillAmount tokens per interval.
+func NewLimiterWithRate(size int, burst, refillAmount uint64, interval time.Duration) *Limiter {
+	if burst == 0 {
+		burst = 1
+	}
+	if refillAmount == 0 {
+		refillAmount = 1
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
 	return &Limiter{
-		buckets: make(map[string]*Bucket),
-		size:    size,
+		buckets:      make(map[string]*Bucket),
+		size:         size,
+		burst:        burst,
+		refillAmount: refillAmount,
+		interval:     interval,
 	}
 }
 
@@ -60,13 +81,19 @@ func (l *Limiter) Allow(key string, now time.Time) bool {
 		}
 		// Consume one token for the initial request.
 		bucket = &Bucket{
-			tokens:     refillTokens - 1,
+			tokens:     l.burst - 1,
 			lastRefill: now,
 		}
 		l.buckets[key] = bucket
 		return true
 	}
-	bucket.Refill(now)
+	if now.Sub(bucket.lastRefill) >= l.interval {
+		bucket.tokens += l.refillAmount
+		if bucket.tokens > l.burst {
+			bucket.tokens = l.burst
+		}
+		bucket.lastRefill = now
+	}
 	return bucket.Allow()
 }
 

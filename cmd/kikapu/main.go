@@ -289,7 +289,7 @@ func main() {
 		mpesaCallback:   mpesaCallback,
 		protectMetrics:  cfg.Env == "production",
 	})
-	rateLimiter := ratelimit.NewLimiter(100)
+	rateLimiter := ratelimit.NewLimiterWithRate(1000, 30, 10, time.Second)
 	var apiHandler http.Handler = mux
 	if httpIdempotencyStore != nil {
 		apiHandler = optionalIdempotencyMiddleware(httpIdempotencyStore)(apiHandler)

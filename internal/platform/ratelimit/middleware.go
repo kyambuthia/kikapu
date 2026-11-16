@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 )
 
 func Middleware(limiter *Limiter, keyFunc func(r *http.Request) string) func(http.Handler) http.Handler {
@@ -16,7 +18,7 @@ func Middleware(limiter *Limiter, keyFunc func(r *http.Request) string) func(htt
 			key := keyFunc(r)
 			if !limiter.Allow(key, time.Now()) {
 				w.Header().Set("Retry-After", "1")
-				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				_ = httpx.WriteError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate limit exceeded", httpx.RequestID(r))
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -29,7 +31,7 @@ func MiddlewareWithRate(limiter *Limiter, keyFunc func(r *http.Request) string, 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !limiter.Allow(keyFunc(r), time.Now()) {
 				w.Header().Set("Retry-After", "1")
-				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				_ = httpx.WriteError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate limit exceeded", httpx.RequestID(r))
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -70,7 +72,7 @@ func MiddlewareWithTrustedProxy(limiter *Limiter, trusted bool) func(http.Handle
 			peer := clientIP(r, trusted)
 			if !limiter.Allow(peer, time.Now()) {
 				w.Header().Set("Retry-After", "1")
-				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				_ = httpx.WriteError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate limit exceeded", httpx.RequestID(r))
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -83,7 +85,7 @@ func MiddlewareWithKey(limiter *Limiter, key string) func(http.Handler) http.Han
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !limiter.Allow(key, time.Now()) {
 				w.Header().Set("Retry-After", "1")
-				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				_ = httpx.WriteError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate limit exceeded", httpx.RequestID(r))
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -106,7 +108,7 @@ func MiddlewareWithAuth(limiter *Limiter) func(http.Handler) http.Handler {
 			}
 			if !limiter.Allow(key, time.Now()) {
 				w.Header().Set("Retry-After", "1")
-				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				_ = httpx.WriteError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate limit exceeded", httpx.RequestID(r))
 				return
 			}
 			next.ServeHTTP(w, r)
