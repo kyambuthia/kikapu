@@ -100,7 +100,11 @@ func Middleware(store Store) func(http.Handler) http.Handler {
 				r.Body = io.NopCloser(bytes.NewReader(body))
 			}
 
-			requestHash := computeRequestHash(r.Method, r.URL.Path, body)
+			target := r.URL.Path
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			requestHash := computeRequestHash(r.Method, target, body)
 
 			rec, replay, err := store.Begin(r.Context(), key, requestHash)
 			if err != nil {

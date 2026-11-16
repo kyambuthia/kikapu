@@ -287,6 +287,7 @@ func main() {
 		authStore:       authStore,
 		paystackWebhook: paystackWebhook,
 		mpesaCallback:   mpesaCallback,
+		protectMetrics:  cfg.Env == "production",
 	})
 	rateLimiter := ratelimit.NewLimiter(100)
 	var apiHandler http.Handler = mux
@@ -396,6 +397,7 @@ type apiDeps struct {
 	authStore       auth.KeyStore
 	paystackWebhook http.Handler
 	mpesaCallback   http.Handler
+	protectMetrics  bool
 }
 
 func buildAPIMux(deps apiDeps) *http.ServeMux {
@@ -455,7 +457,11 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 		mux.Handle("/v1/webhooks/mpesa", deps.mpesaCallback)
 	}
 
-	mux.Handle("/metrics", promhttp.Handler())
+	var metricsHandler http.Handler = promhttp.Handler()
+	if deps.protectMetrics && deps.authStore != nil {
+		metricsHandler = auth.RequireScope(metricsHandler, deps.authStore, "admin")
+	}
+	mux.Handle("/metrics", metricsHandler)
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
