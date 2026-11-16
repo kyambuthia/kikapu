@@ -17,6 +17,7 @@ var (
 	ErrEmptyCart             = errors.New("cart is empty")
 	ErrIdempotencyKeyMissing = errors.New("idempotency key is required")
 	ErrOrderNotFound         = errors.New("order not found")
+	ErrIdempotencyConflict   = errors.New("idempotency key reused with a different cart")
 )
 
 type OrderStatus string
@@ -164,6 +165,9 @@ func (s *Service) PlaceOrderContext(ctx context.Context, cartID, idempotencyKey 
 	}
 
 	if existingOrder, ok := s.idempotency.GetOrderForKey(idempotencyKey); ok {
+		if existingOrder.CartID != cartID {
+			return nil, ErrIdempotencyConflict
+		}
 		return existingOrder, nil
 	}
 

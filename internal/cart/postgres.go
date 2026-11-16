@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // PostgresStore persists carts in PostgreSQL with optimistic version locking.
@@ -84,6 +85,24 @@ func (s *PostgresStore) Save(c *Cart) error {
 	}
 	if rows == 0 {
 		return ErrVersionMismatch
+	}
+	return nil
+}
+
+func (s *PostgresStore) Delete(id string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res, err := s.db.ExecContext(ctx, `DELETE FROM carts WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("cart: delete %s: %w", id, err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cart: rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrCartNotFound
 	}
 	return nil
 }

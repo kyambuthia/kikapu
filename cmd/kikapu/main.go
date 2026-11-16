@@ -205,7 +205,17 @@ func main() {
 	} else {
 		regionRepo = region.NewInMemoryRepository(defaultRegions())
 		channelRepo = channel.NewInMemoryRepository(defaultChannels())
-		inventoryStore = inventory.NewMemoryStore(nil)
+		memInv := inventory.NewMemoryStore(nil)
+		if catalogData, err := os.ReadFile("internal/catalog/testdata/products.json"); err == nil {
+			if prods, err := catalog.LoadProductsFromJSON(catalogData); err == nil {
+				for _, p := range prods {
+					for _, v := range p.Variants {
+						memInv.SetLevel(v.ID, "default", 100)
+					}
+				}
+			}
+		}
+		inventoryStore = memInv
 		idempotencyStore = checkout.NewIdempotencyStore()
 	}
 

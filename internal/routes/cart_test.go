@@ -228,14 +228,35 @@ func TestCartHandler_AddItem_UsesServerPriceAndRejectsUnknownVariant(t *testing.
 		t.Fatalf("Failed to unmarshal cart: %v", err)
 	}
 
-	// Client attempts to spoof unit_price=1 in JSON payload; server must ignore it.
+	// Client attempts to send unknown unit_price field; strict JSON decoding rejects it.
 	spoofPayload := []byte(`{"variant_id":"var001","quantity":2,"unit_price":1}`)
 	req = httptest.NewRequest("POST", "/v1/carts/"+c.ID+"/items", bytes.NewReader(spoofPayload))
 	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("id", c.ID)
 	w = httptest.NewRecorder()
 	handler.AddItem(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("AddItem(unknown unit_price field) status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
 
+	// Trailing garbage after JSON must also be rejected.
+	garbagePayload := []byte(`{"variant_id":"var001","quantity":2}garbage`)
+	req = httptest.NewRequest("POST", "/v1/carts/"+c.ID+"/items", bytes.NewReader(garbagePayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", c.ID)
+	w = httptest.NewRecorder()
+	handler.AddItem(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("AddItem(trailing garbage) status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	// Valid payload resolves canonical 2999 price from catalog.
+	validPayload := []byte(`{"variant_id":"var001","quantity":2}`)
+	req = httptest.NewRequest("POST", "/v1/carts/"+c.ID+"/items", bytes.NewReader(validPayload))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", c.ID)
+	w = httptest.NewRecorder()
+	handler.AddItem(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("AddItem() status = %d, want %d", w.Code, http.StatusOK)
 	}

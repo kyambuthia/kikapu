@@ -130,4 +130,5 @@ func (c *Cart) Total() (money.Amount, error) {
 type Store interface {
 	Get(id string) (*Cart, error)
 	Save(cart *Cart) error
+	Delete(id string) error
 }

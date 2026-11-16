@@ -49,3 +49,14 @@ func (s *InMemoryStore) Save(cart *Cart) error {
 	s.carts[cart.ID] = &cartCopy
 	return nil
 }
+
+func (s *InMemoryStore) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.carts[id]; !ok {
+		return ErrCartNotFound
+	}
+	delete(s.carts, id)
+	return nil
+}

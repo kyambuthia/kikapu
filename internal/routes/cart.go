@@ -2,7 +2,6 @@ package routes
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/cart"
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/checkout"
+	"github.com/kyambuthia/kikapu/internal/inventory"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/money"
 )
@@ -66,7 +66,7 @@ func (h *CartHandler) RegisterRoutes(mux *http.ServeMux) {
 
 func (h *CartHandler) CreateCart(w http.ResponseWriter, r *http.Request) {
 	var req CreateCartRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
@@ -110,19 +110,12 @@ func (h *CartHandler) GetCart(w http.ResponseWriter, r *http.Request) {
 func (h *CartHandler) DeleteCart(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	c, err := h.store.Get(id)
-	if err != nil {
+	if err := h.store.Delete(id); err != nil {
 		if errors.Is(err, cart.ErrCartNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found", httpx.RequestID(r))
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get cart", httpx.RequestID(r))
-		return
-	}
-
-	c.Clear()
-	if err := h.store.Save(c); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to clear cart", httpx.RequestID(r))
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to delete cart", httpx.RequestID(r))
 		return
 	}
 
@@ -133,7 +126,7 @@ func (h *CartHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var req AddItemRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
@@ -231,7 +224,7 @@ func (h *CartHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	variantID := r.PathValue("variantID")
 
 	var req UpdateItemRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
@@ -308,7 +301,7 @@ func (h *CartHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req CheckoutRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
@@ -325,6 +318,14 @@ func (h *CartHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, checkout.ErrEmptyCart) {
 			httpx.WriteError(w, http.StatusBadRequest, "empty_cart", err.Error(), httpx.RequestID(r))
+			return
+		}
+		if errors.Is(err, checkout.ErrIdempotencyConflict) {
+			httpx.WriteError(w, http.StatusConflict, "idempotency_conflict", err.Error(), httpx.RequestID(r))
+			return
+		}
+		if errors.Is(err, inventory.ErrInsufficientStock) {
+			httpx.WriteError(w, http.StatusConflict, "insufficient_stock", err.Error(), httpx.RequestID(r))
 			return
 		}
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to place order", httpx.RequestID(r))
