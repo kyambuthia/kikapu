@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/kyambuthia/kikapu/internal/events"
 )
 
-// PostgresOrderStore implements OrderStore backed by PostgreSQL.
+// PostgresOrderStore implements OrderStore and TransactionalOrderStore backed by PostgreSQL.
 type PostgresOrderStore struct {
 	db *sql.DB
 }
@@ -38,12 +40,27 @@ func (s *PostgresOrderStore) SaveOrder(key string, order *Order) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	return s.SaveOrderWithEvents(ctx, key, order, nil)
+}
+
+// SaveOrderWithEvents atomically inserts the order and appends its outbox events
+// within a single database transaction. If the idempotency key already exists,
+// no duplicate outbox events are emitted and order is populated with the stored row.
+func (s *PostgresOrderStore) SaveOrderWithEvents(ctx context.Context, key string, order *Order, ob events.Outbox, evs ...events.Event) error {
 	resJSON, err := json.Marshal(order.Reservations)
 	if err != nil {
 		return fmt.Errorf("checkout: marshal reservations: %w", err)
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("checkout: begin tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO checkout_orders (id, idempotency_key, cart_id, status, total, currency, payment_id, reservations, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (idempotency_key) DO NOTHING
@@ -52,8 +69,27 @@ func (s *PostgresOrderStore) SaveOrder(key string, order *Order) error {
 		return fmt.Errorf("checkout: save order: %w", err)
 	}
 
-	if existing, ok := s.GetOrderForKey(key); ok {
-		*order = *existing
+	inserted, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checkout: rows affected: %w", err)
+	}
+
+	if inserted > 0 && ob != nil {
+		for i := range evs {
+			if err := ob.Append(ctx, tx, evs[i]); err != nil {
+				return fmt.Errorf("checkout: append outbox event: %w", err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("checkout: commit tx: %w", err)
+	}
+
+	if inserted == 0 {
+		if existing, ok := s.GetOrderForKey(key); ok {
+			*order = *existing
+		}
 	}
 	return nil
 }

@@ -3,10 +3,10 @@ package checkout
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/kyambuthia/kikapu/internal/cart"
 	"github.com/kyambuthia/kikapu/internal/events"
 	"github.com/kyambuthia/kikapu/internal/inventory"
@@ -119,6 +119,12 @@ type OrderStore interface {
 	GetOrder(id string) (*Order, error)
 }
 
+// TransactionalOrderStore is optionally implemented by stores that can persist
+// an order and its outbox events in a single atomic database transaction.
+type TransactionalOrderStore interface {
+	SaveOrderWithEvents(ctx context.Context, key string, order *Order, ob events.Outbox, evs ...events.Event) error
+}
+
 type Service struct {
 	cartStore       cart.Store
 	inventoryStore  inventory.Store
@@ -146,10 +152,15 @@ func NewService(
 }
 
 func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
-	ctx := context.Background()
+	return s.PlaceOrderContext(context.Background(), cartID, idempotencyKey)
+}
 
+func (s *Service) PlaceOrderContext(ctx context.Context, cartID, idempotencyKey string) (*Order, error) {
 	if idempotencyKey == "" {
 		return nil, ErrIdempotencyKeyMissing
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	if existingOrder, ok := s.idempotency.GetOrderForKey(idempotencyKey); ok {
@@ -185,7 +196,6 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 		Amount:         total,
 		CustomerID:     cartID,
 	})
-
 	if err != nil {
 		s.releaseAll(ctx, reservations)
 		return nil, err
@@ -203,71 +213,89 @@ func (s *Service) PlaceOrder(cartID, idempotencyKey string) (*Order, error) {
 		orderStatus = OrderStatusPaymentCapturedFulfilmentFailed
 	}
 
+	now := time.Now().UTC()
 	order := &Order{
-		ID:           fmt.Sprintf("ord_%d", time.Now().UnixNano()),
+		ID:           "ord_" + uuid.NewString(),
 		CartID:       cartID,
 		Status:       orderStatus,
 		Total:        total.Value,
 		Currency:     total.Currency,
 		PaymentID:    chargeResult.ID,
 		Reservations: reservations,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
-	if err := s.idempotency.SaveOrder(idempotencyKey, order); err != nil {
-		return nil, err
-	}
+	pendingEvents := s.buildOrderEvents(order, cartID, chargeResult.ID, len(commitErrors))
 
-	if s.outbox != nil {
-		createdEvent, err := events.NewEvent(events.EventTypeOrderCreated, order.ID, map[string]interface{}{
-			"order_id":   order.ID,
-			"cart_id":    cartID,
-			"status":     string(order.Status),
-			"total":      order.Total,
-			"currency":   order.Currency,
-			"created_at": order.CreatedAt,
-		})
-		if err == nil {
-			s.outbox.Append(ctx, nil, createdEvent)
+	if txStore, ok := s.idempotency.(TransactionalOrderStore); ok && s.outbox != nil {
+		if err := txStore.SaveOrderWithEvents(ctx, idempotencyKey, order, s.outbox, pendingEvents...); err != nil {
+			return nil, err
 		}
-
-		if orderStatus == OrderStatusPaymentCapturedFulfilmentFailed {
-			fulfilmentFailedEvent, err := events.NewEvent(events.EventTypeOrderFulfilmentFailed, order.ID, map[string]interface{}{
-				"order_id":      order.ID,
-				"payment_id":    chargeResult.ID,
-				"total":         order.Total,
-				"currency":      order.Currency,
-				"commit_errors": len(commitErrors),
-				"failed_at":     time.Now(),
-			})
-			if err == nil {
-				s.outbox.Append(ctx, nil, fulfilmentFailedEvent)
-			}
-		} else {
-			paidEvent, err := events.NewEvent(events.EventTypeOrderPaid, order.ID, map[string]interface{}{
-				"order_id":    order.ID,
-				"payment_id":  chargeResult.ID,
-				"total":       order.Total,
-				"currency":    order.Currency,
-				"captured_at": time.Now(),
-			})
-			if err == nil {
-				s.outbox.Append(ctx, nil, paidEvent)
+	} else {
+		if err := s.idempotency.SaveOrder(idempotencyKey, order); err != nil {
+			return nil, err
+		}
+		if s.outbox != nil {
+			for i := range pendingEvents {
+				_ = s.outbox.Append(ctx, nil, pendingEvents[i])
 			}
 		}
 	}
 
 	c.Clear()
-	if err := s.cartStore.Save(c); err != nil {
-	}
+	// Best-effort cart cleanup; the order is already persisted and paid.
+	_ = s.cartStore.Save(c)
 
 	return order, nil
 }
 
+func (s *Service) buildOrderEvents(order *Order, cartID, paymentID string, commitErrCount int) []events.Event {
+	if s.outbox == nil {
+		return nil
+	}
+
+	var out []events.Event
+	if createdEvent, err := events.NewEvent(events.EventTypeOrderCreated, order.ID, map[string]interface{}{
+		"order_id":   order.ID,
+		"cart_id":    cartID,
+		"status":     string(order.Status),
+		"total":      order.Total,
+		"currency":   order.Currency,
+		"created_at": order.CreatedAt,
+	}); err == nil {
+		out = append(out, createdEvent)
+	}
+
+	if order.Status == OrderStatusPaymentCapturedFulfilmentFailed {
+		if failedEvent, err := events.NewEvent(events.EventTypeOrderFulfilmentFailed, order.ID, map[string]interface{}{
+			"order_id":      order.ID,
+			"payment_id":    paymentID,
+			"total":         order.Total,
+			"currency":      order.Currency,
+			"commit_errors": commitErrCount,
+			"failed_at":     time.Now().UTC(),
+		}); err == nil  {
+			out = append(out, failedEvent)
+		}
+	} else {
+		if paidEvent, err := events.NewEvent(events.EventTypeOrderPaid, order.ID, map[string]interface{}{
+			"order_id":    order.ID,
+			"payment_id":  paymentID,
+			"total":       order.Total,
+			"currency":    order.Currency,
+			"captured_at": time.Now().UTC(),
+		}); err == nil  {
+			out = append(out, paidEvent)
+		}
+	}
+
+	return out
+}
+
 func (s *Service) releaseAll(ctx context.Context, reservations []string) {
 	for _, resID := range reservations {
-		s.inventoryStore.Release(ctx, resID)
+		_ = s.inventoryStore.Release(ctx, resID)
 	}
 }
 

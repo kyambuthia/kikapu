@@ -309,7 +309,7 @@ func (h *CartHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order, err := h.checkout.PlaceOrder(req.CartID, idempotencyKey)
+	order, err := h.checkout.PlaceOrderContext(r.Context(), req.CartID, idempotencyKey)
 	if err != nil {
 		if errors.Is(err, cart.ErrCartNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, "cart_not_found", "cart not found", httpx.RequestID(r))
