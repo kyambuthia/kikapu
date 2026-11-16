@@ -75,6 +75,10 @@ func (h *CartHandler) CreateCart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "missing_currency", "currency is required", httpx.RequestID(r))
 		return
 	}
+	if !isValidCurrency(req.Currency) {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_currency", "currency must be a 3-letter uppercase ISO code", httpx.RequestID(r))
+		return
+	}
 
 	id := uuid.New().String()
 	c := cart.NewCart(id, req.Currency)
@@ -308,6 +312,10 @@ func (h *CartHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
+	if req.CartID == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "cart_id is required", httpx.RequestID(r))
+		return
+	}
 
 	order, err := h.checkout.PlaceOrderContext(r.Context(), req.CartID, idempotencyKey)
 	if err != nil {
@@ -327,4 +335,16 @@ func (h *CartHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 		OrderID: order.ID,
 		Status:  string(order.Status),
 	})
+}
+
+func isValidCurrency(code string) bool {
+	if len(code) != 3 {
+		return false
+	}
+	for i := 0; i < 3; i++ {
+		if code[i] < 'A' || code[i] > 'Z' {
+			return false
+		}
+	}
+	return true
 }

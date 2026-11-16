@@ -260,3 +260,24 @@ func TestCartHandler_AddItem_UsesServerPriceAndRejectsUnknownVariant(t *testing.
 		t.Fatalf("AddItem(unknown variant) status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 }
+
+func TestCartHandler_ValidatesCurrencyAndCheckoutCartID(t *testing.T) {
+	handler := setupCartHandler()
+
+	// Lowercase / non-ISO currency must return 400 instead of hitting DB CHECK constraint.
+	req := httptest.NewRequest(http.MethodPost, "/v1/carts", bytes.NewReader([]byte(`{"currency":"usd"}`)))
+	w := httptest.NewRecorder()
+	handler.CreateCart(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateCart(usd) status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	// Missing cart_id on checkout must return 400.
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/checkout", bytes.NewReader([]byte(`{}`)))
+	req2.Header.Set("Idempotency-Key", "idem-missing-cart")
+	w2 := httptest.NewRecorder()
+	handler.Checkout(w2, req2)
+	if w2.Code != http.StatusBadRequest {
+		t.Fatalf("Checkout(empty cart_id) status = %d, want %d", w2.Code, http.StatusBadRequest)
+	}
+}
