@@ -30,6 +30,8 @@ type Record struct {
 	ExpiresAt   time.Time
 }
 
+const maxIdempotencyBodyBytes = 1 << 20 // 1 MiB
+
 type Status string
 
 const (
@@ -84,8 +86,14 @@ func Middleware(store Store) func(http.Handler) http.Handler {
 			var body []byte
 			if r.Body != nil {
 				var err error
+				r.Body = http.MaxBytesReader(w, r.Body, maxIdempotencyBodyBytes)
 				body, err = io.ReadAll(r.Body)
 				if err != nil {
+					var maxErr *http.MaxBytesError
+					if errors.As(err, &maxErr) {
+						httpx.WriteError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "Request body too large", httpx.RequestID(r))
+						return
+					}
 					httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "Failed to read request body", httpx.RequestID(r))
 					return
 				}
@@ -111,6 +119,9 @@ func Middleware(store Store) func(http.Handler) http.Handler {
 			}
 
 			if replay {
+				if w.Header().Get("Content-Type") == "" {
+					w.Header().Set("Content-Type", "application/json")
+				}
 				w.WriteHeader(rec.Status)
 				w.Write(rec.Response)
 				return

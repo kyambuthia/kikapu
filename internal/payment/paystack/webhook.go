@@ -82,6 +82,8 @@ func (s *InMemoryEventStore) SaveEvent(event *ProcessedEvent) error {
 	return nil
 }
 
+const maxWebhookBodyBytes = 1 << 20 // 1 MiB
+
 type WebhookHandler struct {
 	client     *Client
 	eventStore EventStore
@@ -103,8 +105,14 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			httpx.WriteError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "request body too large", httpx.RequestID(r))
+			return
+		}
 		httpx.WriteError(w, http.StatusBadRequest, "read_error", "failed to read request body", httpx.RequestID(r))
 		return
 	}

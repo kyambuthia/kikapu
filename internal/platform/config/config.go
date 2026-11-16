@@ -7,8 +7,10 @@ import (
 
 type Config struct {
 	Addr                string
+	Env                 string
 	Mode                string
 	LogLevel            string
+	TrustProxy          bool
 	PaymentProvider     string
 	PaystackSecretKey   string
 	PaystackBaseURL     string
@@ -24,7 +26,9 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		Addr:                getEnv("KIKAPU_ADDR", ":8080"),
+		Env:                 getEnv("KIKAPU_ENV", "development"),
 		Mode:                getEnv("KIKAPU_MODE", "api"),
+		TrustProxy:          getEnv("KIKAPU_TRUST_PROXY", "false") == "true",
 		LogLevel:            getEnv("KIKAPU_LOG_LEVEL", "info"),
 		PaymentProvider:     getEnv("PAYMENT_PROVIDER", "fake"),
 		PaystackSecretKey:   getEnv("PAYSTACK_SECRET_KEY", ""),

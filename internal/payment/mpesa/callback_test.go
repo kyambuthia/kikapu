@@ -348,3 +348,37 @@ func TestCallbackPayloadParsing(t *testing.T) {
 		t.Errorf("CallbackMetadata items = %d, want 4", len(cb.CallbackMetadata.Item))
 	}
 }
+
+func TestCallbackHandler_RejectsSpoofedXFFWhenUntrusted(t *testing.T) {
+	handler, err := NewCallbackHandler(NewInMemoryCallbackStore(), []string{"196.201.214.0/24"}, slog.Default(), true)
+	if err != nil {
+		t.Fatalf("NewCallbackHandler() error = %v", err)
+	}
+
+	payload := []byte(`{"Body":{"stkCallback":{"MerchantRequestID":"m1","CheckoutRequestID":"c1","ResultCode":0,"ResultDesc":"ok"}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/mpesa", bytes.NewReader(payload))
+	req.RemoteAddr = "198.51.100.55:4444"
+	req.Header.Set("X-Forwarded-For", "196.201.214.10")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d when XFF is spoofed and proxy is untrusted", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestCallbackHandler_RejectsOversizedBody(t *testing.T) {
+	handler, err := NewCallbackHandler(NewInMemoryCallbackStore(), nil, slog.Default(), false)
+	if err != nil {
+		t.Fatalf("NewCallbackHandler() error = %v", err)
+	}
+
+	oversized := bytes.Repeat([]byte("a"), maxCallbackBodyBytes+128)
+	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/mpesa", bytes.NewReader(oversized))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d for oversized payload", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+}

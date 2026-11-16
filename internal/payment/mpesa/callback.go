@@ -92,15 +92,24 @@ func callbackKey(checkoutRequestID string, resultCode int) string {
 	return checkoutRequestID + "_" + intToString(resultCode)
 }
 
+const maxCallbackBodyBytes = 1 << 20 // 1 MiB
+
 type CallbackHandler struct {
 	store        CallbackStore
 	allowedCIDRs []string
 	networks     []*net.IPNet
 	logger       *slog.Logger
 	production   bool
+	trustProxy   bool
 }
 
 func NewCallbackHandler(store CallbackStore, allowedCIDRs []string, logger *slog.Logger, production bool) (*CallbackHandler, error) {
+	return NewCallbackHandlerWithProxy(store, allowedCIDRs, logger, production, false)
+}
+
+// NewCallbackHandlerWithProxy creates an M-Pesa callback handler. When trustProxy
+// is false, X-Forwarded-For is ignored so callers cannot spoof allowlisted IPs.
+func NewCallbackHandlerWithProxy(store CallbackStore, allowedCIDRs []string, logger *slog.Logger, production, trustProxy bool) (*CallbackHandler, error) {
 	networks := make([]*net.IPNet, 0, len(allowedCIDRs))
 	for _, cidr := range allowedCIDRs {
 		_, network, err := net.ParseCIDR(cidr)
@@ -128,6 +137,7 @@ func NewCallbackHandler(store CallbackStore, allowedCIDRs []string, logger *slog
 		networks:     networks,
 		logger:       logger,
 		production:   production,
+		trustProxy:   trustProxy,
 	}, nil
 }
 
@@ -143,7 +153,7 @@ func (h *CallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(h.networks) > 0 {
-		ip, err := parseRemoteAddr(r)
+		ip, err := parseRemoteAddr(r, h.trustProxy)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "invalid_ip", "failed to parse source IP", requestID)
 			return
@@ -159,8 +169,14 @@ func (h *CallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxCallbackBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			httpx.WriteError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "request body too large", requestID)
+			return
+		}
 		httpx.WriteError(w, http.StatusBadRequest, "read_error", "failed to read request body", requestID)
 		return
 	}
@@ -257,12 +273,13 @@ func (h *CallbackHandler) ipAllowed(ip net.IP) bool {
 	return false
 }
 
-func parseRemoteAddr(r *http.Request) (net.IP, error) {
-	addr := r.Header.Get("X-Forwarded-For")
-	if addr != "" {
-		parts := strings.Split(addr, ",")
-		if len(parts) > 0 {
-			addr = strings.TrimSpace(parts[0])
+func parseRemoteAddr(r *http.Request, trustProxy bool) (net.IP, error) {
+	var addr string
+	if trustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if first, _, _ := strings.Cut(xff, ","); strings.TrimSpace(first) != "" {
+				addr = strings.TrimSpace(first)
+			}
 		}
 	}
 	if addr == "" {

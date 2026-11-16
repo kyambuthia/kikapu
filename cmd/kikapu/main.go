@@ -228,11 +228,12 @@ func main() {
 
 	var mpesaCallback http.Handler
 	if cfg.PaymentProvider == "mpesa" || cfg.MpesaAllowedCIDRs != "" {
-		cbHandler, err := mpesa.NewCallbackHandler(
+		cbHandler, err := mpesa.NewCallbackHandlerWithProxy(
 			mpesa.NewInMemoryCallbackStore(),
 			parseCSV(cfg.MpesaAllowedCIDRs),
 			logger,
-			false,
+			cfg.Env == "production",
+			cfg.TrustProxy,
 		)
 		if err != nil {
 			logger.Error("failed to create M-Pesa callback handler", "error", err)
@@ -277,7 +278,7 @@ func main() {
 	handler := httpx.LoggingMiddleware(logger)(
 		httpx.RequestIDMiddleware(
 			obs.MetricsMiddleware(
-				ratelimit.MiddlewareWithTrustedProxy(rateLimiter, false)(apiHandler),
+				ratelimit.MiddlewareWithTrustedProxy(rateLimiter, cfg.TrustProxy)(apiHandler),
 			),
 		),
 	)
