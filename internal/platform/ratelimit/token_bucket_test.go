@@ -170,3 +170,28 @@ func TestLimiterKeyIsolation(t *testing.T) {
 		t.Errorf("expected 2 isolated buckets, got %d", len(limiter.buckets))
 	}
 }
+
+func TestLimiter_RejectsSubSecondBurstAndEvictsStale(t *testing.T) {
+	now := time.Now()
+	limiter := NewLimiter(2)
+
+	if !limiter.Allow("ip-1", now) {
+		t.Fatal("expected first request to be allowed")
+	}
+	// 10ms later is within the 1s refill interval and must be denied.
+	if limiter.Allow("ip-1", now.Add(10*time.Millisecond)) {
+		t.Fatal("expected second request within refill interval to be denied")
+	}
+	// After 1s, token refills and request is allowed.
+	if !limiter.Allow("ip-1", now.Add(1*time.Second)) {
+		t.Fatal("expected request after 1s refill to be allowed")
+	}
+
+	// Fill capacity with a second key, then advance past staleBucketTTL.
+	if !limiter.Allow("ip-2", now) {
+		t.Fatal("expected second key to be allowed")
+	}
+	if !limiter.Allow("ip-3", now.Add(staleBucketTTL+time.Second)) {
+		t.Fatal("expected stale buckets to be evicted so new key is allowed")
+	}
+}

@@ -175,21 +175,29 @@ func TestMiddlewareWithTrustedProxy_IgnoresSpoofedXFFWhenUntrusted(t *testing.T)
 		t.Fatalf("clientIP(trusted=true) = %q, want %q", got, "203.0.113.1")
 	}
 
-	// Limiter size=1 only tracks 1 distinct key; when trusted=false, spoofed XFF
-	// values collapse onto the same RemoteAddr key instead of creating new buckets.
-	limiter := NewLimiter(1)
+	// With limiter size=2, a trusted proxy would create two separate buckets
+	// (203.0.113.1 and 203.0.113.2) and allow both. With trusted=false, both
+	// collapse onto RemoteAddr 198.51.100.10 so the sub-second second request is 429.
+	limiter := NewLimiter(2)
 	handler := MiddlewareWithTrustedProxy(limiter, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	for _, xff := range []string{"203.0.113.1", "203.0.113.2"} {
-		r := httptest.NewRequest(http.MethodGet, "/v1/products", nil)
-		r.RemoteAddr = "198.51.100.10:1111"
-		r.Header.Set("X-Forwarded-For", xff)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, r)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status with spoofed XFF %q = %d, want %d", xff, rec.Code, http.StatusOK)
-		}
+	r1 := httptest.NewRequest(http.MethodGet, "/v1/products", nil)
+	r1.RemoteAddr = "198.51.100.10:1111"
+	r1.Header.Set("X-Forwarded-For", "203.0.113.1")
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, r1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want %d", rec1.Code, http.StatusOK)
+	}
+
+	r2 := httptest.NewRequest(http.MethodGet, "/v1/products", nil)
+	r2.RemoteAddr = "198.51.100.10:1111"
+	r2.Header.Set("X-Forwarded-For", "203.0.113.2")
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, r2)
+	if rec2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second status with spoofed XFF = %d, want %d", rec2.Code, http.StatusTooManyRequests)
 	}
 }

@@ -5,15 +5,21 @@ import (
 	"time"
 )
 
+const (
+	refillTokens   = 1
+	refillInterval = time.Second
+	staleBucketTTL = 5 * time.Minute
+)
+
 type Bucket struct {
 	tokens     uint64
 	lastRefill time.Time
 }
 
-const refillTokens = 1
-
+// Refill replenishes tokens only after at least one refillInterval has elapsed
+// since the last refill, preventing sub-second bursts from refilling every call.
 func (b *Bucket) Refill(now time.Time) {
-	if now.After(b.lastRefill) {
+	if now.Sub(b.lastRefill) >= refillInterval {
 		b.tokens = refillTokens
 		b.lastRefill = now
 	}
@@ -47,10 +53,14 @@ func (l *Limiter) Allow(key string, now time.Time) bool {
 	bucket, exists := l.buckets[key]
 	if !exists {
 		if len(l.buckets) >= l.size {
+			l.evictStaleLocked(now)
+		}
+		if len(l.buckets) >= l.size {
 			return false
 		}
+		// Consume one token for the initial request.
 		bucket = &Bucket{
-			tokens:     refillTokens,
+			tokens:     refillTokens - 1,
 			lastRefill: now,
 		}
 		l.buckets[key] = bucket
@@ -58,6 +68,14 @@ func (l *Limiter) Allow(key string, now time.Time) bool {
 	}
 	bucket.Refill(now)
 	return bucket.Allow()
+}
+
+func (l *Limiter) evictStaleLocked(now time.Time) {
+	for k, b := range l.buckets {
+		if now.Sub(b.lastRefill) >= staleBucketTTL {
+			delete(l.buckets, k)
+		}
+	}
 }
 
 func (l *Limiter) Evict(key string) {
