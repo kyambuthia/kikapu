@@ -230,3 +230,26 @@ func TestConfigValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestConfig_ProductionValidation(t *testing.T) {
+	cfg := &Config{
+		Addr:            ":8080",
+		Env:             "production",
+		Mode:            "api",
+		LogLevel:        "info",
+		PaymentProvider: "paystack",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error when PAYSTACK_SECRET_KEY is missing in production")
+	}
+
+	cfg.PaymentProvider = "mpesa"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error when MPESA_ALLOWED_CIDRS is missing in production")
+	}
+
+	cfg.MpesaAllowedCIDRs = "196.201.214.0/24"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected valid production mpesa config, got: %v", err)
+	}
+}

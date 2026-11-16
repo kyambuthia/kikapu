@@ -72,6 +72,15 @@ func (c *Config) Validate() error {
 		return errors.New("payment provider must be 'fake', 'paystack', or 'mpesa'")
 	}
 
+	if c.Env == "production" {
+		if c.PaymentProvider == "paystack" && c.PaystackSecretKey == "" {
+			return errors.New("PAYSTACK_SECRET_KEY is required in production")
+		}
+		if c.PaymentProvider == "mpesa" && c.MpesaAllowedCIDRs == "" {
+			return errors.New("MPESA_ALLOWED_CIDRS is required in production")
+		}
+	}
+
 	return nil
 }
 

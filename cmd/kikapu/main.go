@@ -296,8 +296,12 @@ func main() {
 	}
 	handler := httpx.LoggingMiddleware(logger)(
 		httpx.RequestIDMiddleware(
-			obs.MetricsMiddleware(
-				ratelimit.MiddlewareWithTrustedProxy(rateLimiter, cfg.TrustProxy)(apiHandler),
+			httpx.SecurityHeadersMiddleware(
+				obs.MetricsMiddleware(
+					ratelimit.MiddlewareWithTrustedProxy(rateLimiter, cfg.TrustProxy)(
+						httpx.MaxBodyMiddleware(1 << 20)(apiHandler),
+					),
+				),
 			),
 		),
 	)

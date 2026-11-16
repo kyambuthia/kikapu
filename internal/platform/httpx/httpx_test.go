@@ -3,6 +3,7 @@ package httpx
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"net/http/httptest"
 	"testing"
 )
@@ -241,5 +242,34 @@ func TestLoggingMiddleware(t *testing.T) {
 
 	if logger.lastMsg != "request" {
 		t.Errorf("logger message = %v, want 'request'", logger.lastMsg)
+	}
+}
+
+func TestSecurityHeadersAndMaxBodyMiddleware(t *testing.T) {
+	h := SecurityHeadersMiddleware(MaxBodyMiddleware(16)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var dst map[string]any
+		if err := ReadJSON(r, &dst); err != nil {
+			WriteError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "too large", RequestID(r))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/keys", strings.NewReader(`{"name":"ok"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Header().Get("X-Frame-Options") != "DENY" {
+		t.Errorf("X-Frame-Options = %q, want DENY", rec.Header().Get("X-Frame-Options"))
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store on /v1/auth/", rec.Header().Get("Cache-Control"))
+	}
+
+	reqBig := httptest.NewRequest(http.MethodPost, "/v1/carts", strings.NewReader(`{"name":"way-too-long-payload"}`))
+	recBig := httptest.NewRecorder()
+	h.ServeHTTP(recBig, reqBig)
+	if recBig.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized body status = %d, want %d", recBig.Code, http.StatusRequestEntityTooLarge)
 	}
 }
