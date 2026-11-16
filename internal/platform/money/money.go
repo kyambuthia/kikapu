@@ -14,8 +14,8 @@ var (
 )
 
 type Amount struct {
-	Value    int64
-	Currency string
+	Value    int64  `json:"value"`
+	Currency string `json:"currency"`
 }
 
 func NewAmount(value int64, currency string) Amount {

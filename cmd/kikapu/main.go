@@ -468,10 +468,18 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 	mux.Handle("/metrics", metricsHandler)
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
+			return
+		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
+			return
+		}
 		if deps.db != nil {
 			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 			defer cancel()
@@ -484,6 +492,10 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 	})
 
 	mux.HandleFunc("/v1/version", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
+			return
+		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{
 			"version": version,
 			"commit":  commit,

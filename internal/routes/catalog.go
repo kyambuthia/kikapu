@@ -235,10 +235,10 @@ func (h *CatalogHandler) listProducts(w http.ResponseWriter, r *http.Request) {
 
 	data := make([]ProductResponse, 0, len(filteredProducts))
 	for _, p := range filteredProducts {
-		resp := applySparseFieldsetWithVariant(p, fields, variantFields)
-		if resp.ID == "" && fields != nil {
+		if p.Status != "published" {
 			continue
 		}
+		resp := applySparseFieldsetWithVariant(p, fields, variantFields)
 		data = append(data, resp)
 	}
 
@@ -263,9 +263,13 @@ func (h *CatalogHandler) getProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slug := strings.TrimPrefix(path, "/v1/products/")
+	slug := strings.TrimSuffix(strings.TrimPrefix(path, "/v1/products/"), "/")
 	if slug == "" {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found", httpx.RequestID(r))
+		return
+	}
+	if err := catalog.ValidateSlug(slug); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_slug", "invalid product slug", httpx.RequestID(r))
 		return
 	}
 
@@ -306,6 +310,11 @@ func (h *CatalogHandler) getProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if product.Status != "published" {
+		httpx.WriteError(w, http.StatusNotFound, "product_not_found", "product not found", httpx.RequestID(r))
+		return
+	}
+
 	resp := applySparseFieldsetWithVariant(*product, fields, variantFields)
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
@@ -317,42 +326,65 @@ func WriteJSON(w http.ResponseWriter, status int, data interface{}) error {
 }
 
 func (h *CatalogHandler) filterProductsByRegionChannel(ctx interface{}, products []catalog.Product, regionID, channelSlug string) []catalog.Product {
-	if h.RegionRepo == nil || h.ChannelRepo == nil {
-		return products
-	}
-
 	var ch *channel.SalesChannel
-	var err error
 	if channelSlug != "" {
+		if h.ChannelRepo == nil {
+			return nil
+		}
+		var err error
 		ch, err = h.ChannelRepo.GetBySlug(ctx, channelSlug)
 		if err != nil {
-			return products
+			return nil
 		}
 	}
 
 	var reg *region.Region
 	if regionID != "" {
+		if h.RegionRepo == nil {
+			return nil
+		}
+		var err error
 		reg, err = h.RegionRepo.Get(ctx, regionID)
 		if err != nil {
-			return products
+			return nil
 		}
 	}
 
-	var allowedRegions map[string]bool
-	if ch != nil {
-		allowedRegions = make(map[string]bool)
+	if ch != nil && reg != nil {
+		allowed := false
 		for _, rID := range ch.Regions {
-			allowedRegions[rID] = true
+			if rID == reg.ID {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return nil
 		}
 	}
 
 	result := make([]catalog.Product, 0, len(products))
 	for _, p := range products {
-		if ch != nil && reg != nil && allowedRegions[reg.ID] {
-			result = append(result, p)
-		} else if ch == nil && reg == nil {
-			result = append(result, p)
+		if reg != nil && !productMatchesCurrency(p, reg.Currency) {
+			continue
 		}
+		result = append(result, p)
 	}
 	return result
+}
+
+func productMatchesCurrency(p catalog.Product, currency string) bool {
+	if currency == "" {
+		return true
+	}
+	for _, v := range p.Variants {
+		c := v.Currency
+		if c == "" {
+			c = v.Price.Currency
+		}
+		if c == currency {
+			return true
+		}
+	}
+	return false
 }

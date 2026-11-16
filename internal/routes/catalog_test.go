@@ -327,3 +327,60 @@ func TestCatalogHandler_RegisterRoutes(t *testing.T) {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
 	}
 }
+
+func TestCatalogHandler_SparseFieldsWithoutIDAndDraftFiltering(t *testing.T) {
+	repo := catalog.NewInMemoryRepository([]catalog.Product{
+		{
+			ID:     "prod-pub",
+			Slug:   "published-item",
+			Name:   "Published Item",
+			Status: "published",
+			Variants: []catalog.Variant{
+				{ID: "var-pub", SKU: "PUB-1", Price: money.NewAmount(1500, "USD"), Currency: "USD"},
+			},
+		},
+		{
+			ID:     "prod-draft",
+			Slug:   "draft-item",
+			Name:   "Draft Item",
+			Status: "draft",
+			Variants: []catalog.Variant{
+				{ID: "var-draft", SKU: "DRF-1", Price: money.NewAmount(1000, "USD"), Currency: "USD"},
+			},
+		},
+	})
+	handler := NewCatalogHandler(repo)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. fields=slug,name (without id) must still return published products.
+	req := httptest.NewRequest(http.MethodGet, "/v1/products?fields=slug,name", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var listResp ProductListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if len(listResp.Data) != 1 || listResp.Data[0].Slug != "published-item" {
+		t.Fatalf("Data = %+v, want 1 published item", listResp.Data)
+	}
+
+	// 2. Draft product must not be exposed on GET /v1/products/{slug}.
+	reqDraft := httptest.NewRequest(http.MethodGet, "/v1/products/draft-item", nil)
+	recDraft := httptest.NewRecorder()
+	mux.ServeHTTP(recDraft, reqDraft)
+	if recDraft.Code != http.StatusNotFound {
+		t.Fatalf("draft product status = %d, want %d", recDraft.Code, http.StatusNotFound)
+	}
+
+	// 3. Invalid slug format must return 400.
+	reqBadSlug := httptest.NewRequest(http.MethodGet, "/v1/products/invalid%20slug!", nil)
+	recBadSlug := httptest.NewRecorder()
+	mux.ServeHTTP(recBadSlug, reqBadSlug)
+	if recBadSlug.Code != http.StatusBadRequest {
+		t.Fatalf("invalid slug status = %d, want %d", recBadSlug.Code, http.StatusBadRequest)
+	}
+}
