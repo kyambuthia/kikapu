@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
@@ -41,7 +42,9 @@ func (s *PostgresStore) scanKey(query string, arg interface{}) (*Key, error) {
 		expiresAt sql.NullTime
 		revokedAt sql.NullTime
 	)
-	err := s.db.QueryRow(query, arg).Scan(
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := s.db.QueryRowContext(ctx, query, arg).Scan(
 		&k.ID, &k.Name, &k.Prefix, &k.Hash, &scopesRaw, &expiresAt, &revokedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -80,7 +83,9 @@ func (s *PostgresStore) Create(name string, scopes []string, expiresAt *int64) (
 		k.ExpiresAt = &t
 	}
 
-	_, err = s.db.Exec(`
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO api_keys (id, name, prefix, hash, scopes, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`, k.ID, k.Name, k.Prefix, k.Hash, formatPGTextArray(k.Scopes), k.ExpiresAt)
@@ -104,7 +109,9 @@ func (s *PostgresStore) Seed(name, rawKey string, scopes []string) (*Key, error)
 		Hash:   hash[:],
 		Scopes: scopes,
 	}
-	_, err := s.db.Exec(`
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO api_keys (id, name, prefix, hash, scopes)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (hash) DO NOTHING
@@ -116,7 +123,9 @@ func (s *PostgresStore) Seed(name, rawKey string, scopes []string) (*Key, error)
 }
 
 func (s *PostgresStore) List() ([]Key, error) {
-	rows, err := s.db.Query(`
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, prefix, scopes, expires_at, revoked_at
 		FROM api_keys
 		ORDER BY created_at
@@ -156,7 +165,9 @@ func (s *PostgresStore) List() ([]Key, error) {
 
 func (s *PostgresStore) Revoke(id string) error {
 	now := time.Now().UTC()
-	res, err := s.db.Exec(`
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	res, err := s.db.ExecContext(ctx, `
 		UPDATE api_keys
 		SET revoked_at = $2
 		WHERE id = $1

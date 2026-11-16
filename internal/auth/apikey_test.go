@@ -650,3 +650,24 @@ func TestKeyHashStorage(t *testing.T) {
 		t.Errorf("Hash should be 32 bytes (SHA-256), got %d", len(storedKey.Hash))
 	}
 }
+
+func TestCreateKeyHandler_ValidatesScopesAndExpiry(t *testing.T) {
+	store := NewInMemoryStore()
+	h := CreateKeyHandler(store)
+
+	// Empty scope entry must be rejected.
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/keys", strings.NewReader(`{"name":"k1","scopes":[""]}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty scope status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	// Past expires_at must be rejected.
+	req2 := httptest.NewRequest(http.MethodPost, "/v1/auth/keys", strings.NewReader(`{"name":"k2","scopes":["admin"],"expires_at":1000}`))
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusBadRequest {
+		t.Fatalf("past expires_at status = %d, want %d", rec2.Code, http.StatusBadRequest)
+	}
+}

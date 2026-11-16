@@ -46,6 +46,16 @@ func CreateKeyHandler(store KeyStore) http.HandlerFunc {
 			httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "at least one scope is required", httpx.RequestID(r))
 			return
 		}
+		for _, scope := range req.Scopes {
+			if scope == "" {
+				httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "scopes must be non-empty", httpx.RequestID(r))
+				return
+			}
+		}
+		if req.ExpiresAt != nil && *req.ExpiresAt <= time.Now().Unix() {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "expires_at must be in the future", httpx.RequestID(r))
+			return
+		}
 
 		key, keyStr, err := store.Create(req.Name, req.Scopes, req.ExpiresAt)
 		if err != nil {
