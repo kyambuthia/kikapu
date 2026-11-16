@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -160,9 +161,7 @@ func main() {
 	} else {
 		subscriberStore = worker.NewInMemorySubscriberStore()
 	}
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	httpClient := worker.NewSafeWebhookClient(30 * time.Second)
 	deliverer := worker.NewDeliverer(httpClient, eventOutbox, subscriberStore)
 	deliverer.AddConsumer(notify.NewConsumer(notify.NewLogSender(logger)))
 
@@ -219,7 +218,12 @@ func main() {
 	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
-	go deliverer.Run(workerCtx, 5*time.Second)
+	var workerWG sync.WaitGroup
+	workerWG.Add(1)
+	go func() {
+		defer workerWG.Done()
+		deliverer.Run(workerCtx, 5*time.Second)
+	}()
 
 	var paystackWebhook http.Handler
 	if psClient, ok := paymentProvider.(*paystack.Client); ok {
@@ -308,6 +312,7 @@ func main() {
 	logger.Info("shutting down server")
 
 	workerCancel()
+	workerWG.Wait()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -325,7 +330,12 @@ func runWorker(logger *slog.Logger, deliverer *worker.Deliverer) {
 	defer cancel()
 
 	logger.Info("starting in worker mode", "version", version, "commit", commit)
-	go deliverer.Run(ctx, 5*time.Second)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		deliverer.Run(ctx, 5*time.Second)
+	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -333,6 +343,7 @@ func runWorker(logger *slog.Logger, deliverer *worker.Deliverer) {
 
 	logger.Info("shutting down worker")
 	cancel()
+	wg.Wait()
 }
 
 func buildPaymentProvider(cfg *config.Config) (payment.Provider, error) {

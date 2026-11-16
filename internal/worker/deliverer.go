@@ -4,13 +4,68 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
+	"syscall"
 	"time"
 
 	"github.com/kyambuthia/kikapu/internal/events"
 	"github.com/kyambuthia/kikapu/internal/webhook"
 )
+
+const maxWebhookResponseBytes = 64 << 10 // 64 KiB
+
+var errDisallowedWebhookTarget = errors.New("webhook target address is not allowed")
+
+// NewSafeWebhookClient returns an HTTP client whose dialer blocks connections
+// to loopback, private, link-local (including cloud metadata), and multicast IPs.
+// Checking at dial time prevents DNS rebinding SSRF.
+func NewSafeWebhookClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control: func(network, address string, c syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			addr, err := netip.ParseAddr(host)
+			if err != nil {
+				return err
+			}
+			if isBlockedAddr(addr) {
+				return fmt.Errorf("%w: %s", errDisallowedWebhookTarget, addr.String())
+			}
+			return nil
+		},
+	}
+
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DialContext:         dialer.DialContext,
+			ForceAttemptHTTP2:   true,
+			MaxIdleConns:        64,
+			IdleConnTimeout:     90 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+	}
+}
+
+func isBlockedAddr(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	return addr.IsLoopback() ||
+		addr.IsPrivate() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() ||
+		addr.IsMulticast() ||
+		addr.IsUnspecified()
+}
 
 type Subscription struct {
 	ID     string
@@ -100,44 +155,76 @@ func (d *Deliverer) ProcessBatch(ctx context.Context) {
 			}
 		}
 		if consumerErr != nil {
-			d.outbox.MarkFailed(ctx, record.ID, consumerErr, d.backoff(record.Attempts))
+			_ = d.outbox.MarkFailed(ctx, record.ID, consumerErr, d.backoff(record.Attempts))
 			continue
 		}
 
 		subscribers, err := d.store.ListByEventType(ctx, record.Event.Type)
 		if err != nil {
+			// Release the claimed record back for retry instead of leaving it stuck.
+			_ = d.outbox.MarkFailed(ctx, record.ID, err, d.backoff(record.Attempts))
 			continue
 		}
 
-		delivered := false
+		var (
+			matched    int
+			firstErr   error
+			retryable  bool
+		)
 		for _, sub := range subscribers {
-			if !sub.Active {
+			if !sub.Active || !subMatchesEvent(sub.Types, record.Event.Type) {
 				continue
 			}
-
-			for _, et := range sub.Types {
-				if et == record.Event.Type || et == "*" {
-					d.deliver(ctx, record, sub)
-					delivered = true
-					break
+			matched++
+			canRetry, err := d.deliver(ctx, record, sub)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				if canRetry {
+					retryable = true
 				}
 			}
 		}
-		if !delivered && len(d.consumers) > 0 {
-			d.outbox.MarkSent(ctx, record.ID)
+
+		if firstErr != nil {
+			nextAttempt := time.Time{}
+			if retryable {
+				nextAttempt = d.backoff(record.Attempts)
+			}
+			_ = d.outbox.MarkFailed(ctx, record.ID, firstErr, nextAttempt)
+			continue
+		}
+
+		if matched > 0 || len(d.consumers) > 0 {
+			_ = d.outbox.MarkSent(ctx, record.ID)
 		}
 	}
 }
 
-func (d *Deliverer) deliver(ctx context.Context, record events.Record, sub Subscription) {
-	body, err := json.Marshal(record.Event)
-	if err != nil {
-		return
+func subMatchesEvent(types []string, eventType string) bool {
+	for _, et := range types {
+		if et == eventType || et == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *Deliverer) deliver(ctx context.Context, record events.Record, sub Subscription) (bool, error) {
+	parsedURL, err := url.Parse(sub.URL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		return false, fmt.Errorf("invalid webhook URL")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", sub.URL, bytes.NewReader(body))
+	body, err := json.Marshal(record.Event)
 	if err != nil {
-		return
+		return false, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sub.URL, bytes.NewReader(body))
+	if err != nil {
+		return false, err
 	}
 
 	ts := time.Now().UTC()
@@ -151,18 +238,18 @@ func (d *Deliverer) deliver(ctx context.Context, record events.Record, sub Subsc
 
 	resp, err := d.client.Do(req)
 	if err != nil {
-		d.outbox.MarkFailed(ctx, record.ID, err, d.backoff(record.Attempts))
-		return
+		return true, err
 	}
 	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxWebhookResponseBytes))
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		d.outbox.MarkSent(ctx, record.ID)
+		return false, nil
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
-		d.outbox.MarkFailed(ctx, record.ID, fmt.Errorf("4xx response: %d", resp.StatusCode), time.Time{})
+		return false, fmt.Errorf("4xx response: %d", resp.StatusCode)
 	default:
-		d.outbox.MarkFailed(ctx, record.ID, fmt.Errorf("5xx response: %d", resp.StatusCode), d.backoff(record.Attempts))
+		return true, fmt.Errorf("5xx response: %d", resp.StatusCode)
 	}
 }
 

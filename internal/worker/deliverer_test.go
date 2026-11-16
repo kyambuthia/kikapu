@@ -384,3 +384,18 @@ func TestDeliverer_Consumers(t *testing.T) {
 		t.Fatalf("consumer events = %+v, want 1 event evt_consumer_1", consumer.events)
 	}
 }
+
+func TestNewSafeWebhookClient_BlocksPrivateAndLoopbackTargets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewSafeWebhookClient(2 * time.Second)
+	if _, err := client.Get(server.URL); err == nil {
+		t.Fatal("expected NewSafeWebhookClient to block loopback server")
+	}
+	if _, err := client.Get("http://169.254.169.254/latest/meta-data/"); err == nil {
+		t.Fatal("expected NewSafeWebhookClient to block link-local metadata IP")
+	}
+}
