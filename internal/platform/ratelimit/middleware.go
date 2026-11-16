@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -59,10 +61,13 @@ func reqSizeExceeds(r *http.Request, maxSize int) bool {
 	return false
 }
 
+// MiddlewareWithTrustedProxy rate-limits requests by client IP.
+// X-Forwarded-For is only consulted when trusted is true; otherwise
+// r.RemoteAddr is used so callers cannot spoof headers to bypass limits.
 func MiddlewareWithTrustedProxy(limiter *Limiter, trusted bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			peer := getPeerAddress(r)
+			peer := clientIP(r, trusted)
 			if !limiter.Allow(peer, time.Now()) {
 				w.Header().Set("Retry-After", "1")
 				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
@@ -168,9 +173,17 @@ func RemoteAddr(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-func getPeerAddress(r *http.Request) string {
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		return forwarded
+func clientIP(r *http.Request, trustProxy bool) string {
+	if trustProxy {
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			if first, _, _ := strings.Cut(forwarded, ","); strings.TrimSpace(first) != "" {
+				return strings.TrimSpace(first)
+			}
+		}
 	}
-	return RemoteAddr(r)
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil && host != "" {
+		return host
+	}
+	return r.RemoteAddr
 }

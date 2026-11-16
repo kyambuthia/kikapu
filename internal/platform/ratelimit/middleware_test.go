@@ -162,3 +162,34 @@ func TestMiddlewareVariants_AndRequestID(t *testing.T) {
 		}
 	})
 }
+
+func TestMiddlewareWithTrustedProxy_IgnoresSpoofedXFFWhenUntrusted(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/products", nil)
+	req.RemoteAddr = "198.51.100.10:1111"
+	req.Header.Set("X-Forwarded-For", "203.0.113.1, 10.0.0.1")
+
+	if got := clientIP(req, false); got != "198.51.100.10" {
+		t.Fatalf("clientIP(trusted=false) = %q, want %q", got, "198.51.100.10")
+	}
+	if got := clientIP(req, true); got != "203.0.113.1" {
+		t.Fatalf("clientIP(trusted=true) = %q, want %q", got, "203.0.113.1")
+	}
+
+	// Limiter size=1 only tracks 1 distinct key; when trusted=false, spoofed XFF
+	// values collapse onto the same RemoteAddr key instead of creating new buckets.
+	limiter := NewLimiter(1)
+	handler := MiddlewareWithTrustedProxy(limiter, false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for _, xff := range []string{"203.0.113.1", "203.0.113.2"} {
+		r := httptest.NewRequest(http.MethodGet, "/v1/products", nil)
+		r.RemoteAddr = "198.51.100.10:1111"
+		r.Header.Set("X-Forwarded-For", xff)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status with spoofed XFF %q = %d, want %d", xff, rec.Code, http.StatusOK)
+		}
+	}
+}
