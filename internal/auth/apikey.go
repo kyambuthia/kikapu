@@ -10,10 +10,10 @@ import (
 )
 
 var (
-	ErrKeyExpired  = errors.New("api key has expired")
-	ErrKeyRevoked  = errors.New("api key has been revoked")
-	ErrKeyInvalid  = errors.New("api key is invalid")
-	ErrKeyNotFound = errors.New("api key not found")
+	ErrKeyExpired        = errors.New("api key has expired")
+	ErrKeyRevoked        = errors.New("api key has been revoked")
+	ErrKeyInvalid        = errors.New("api key is invalid")
+	ErrKeyNotFound       = errors.New("api key not found")
 	ErrMissingKey        = errors.New("api key is required")
 	ErrKeyAlreadyRevoked = errors.New("api key has already been revoked")
 )
