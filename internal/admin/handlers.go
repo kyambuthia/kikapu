@@ -101,17 +101,20 @@ func (h *Handler) handleOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if parts[1] == "fulfillments" {
-		if h.fulfillmentSvc == nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "fulfillment service not configured", httpx.RequestID(r))
+		if len(parts) == 2 {
+			if r.Method != http.MethodPost {
+				httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
+				return
+			}
+			if h.fulfillmentSvc == nil {
+				httpx.WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "fulfillment service not configured", httpx.RequestID(r))
+				return
+			}
+			h.createFulfillment(w, r, orderID)
 			return
 		}
-
-		if len(parts) == 2 {
-			if r.Method == http.MethodPost {
-				h.createFulfillment(w, r, orderID)
-			} else {
-				httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
-			}
+		if h.fulfillmentSvc == nil {
+			httpx.WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "fulfillment service not configured", httpx.RequestID(r))
 			return
 		}
 

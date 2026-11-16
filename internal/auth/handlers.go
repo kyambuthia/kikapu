@@ -114,6 +114,10 @@ func RevokeKeyHandler(store KeyStore) http.HandlerFunc {
 				httpx.WriteError(w, http.StatusNotFound, "key_not_found", "key not found", httpx.RequestID(r))
 				return
 			}
+			if errors.Is(err, ErrKeyAlreadyRevoked) {
+				httpx.WriteError(w, http.StatusConflict, "key_already_revoked", "key already revoked", httpx.RequestID(r))
+				return
+			}
 			httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to revoke key", httpx.RequestID(r))
 			return
 		}

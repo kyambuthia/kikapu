@@ -14,7 +14,8 @@ var (
 	ErrKeyRevoked  = errors.New("api key has been revoked")
 	ErrKeyInvalid  = errors.New("api key is invalid")
 	ErrKeyNotFound = errors.New("api key not found")
-	ErrMissingKey  = errors.New("api key is required")
+	ErrMissingKey        = errors.New("api key is required")
+	ErrKeyAlreadyRevoked = errors.New("api key has already been revoked")
 )
 
 type Key struct {

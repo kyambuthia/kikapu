@@ -460,6 +460,9 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 			}
 		})
 		authMux.HandleFunc("DELETE /v1/auth/keys/{id}", revokeKey)
+		authMux.HandleFunc("/v1/auth/keys/", func(w http.ResponseWriter, r *http.Request) {
+			httpx.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", httpx.RequestID(r))
+		})
 
 		mux.Handle("/v1/auth/", auth.RequireScope(authMux, deps.authStore, "admin"))
 	}

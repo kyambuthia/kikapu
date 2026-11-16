@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"errors"
 	"sync"
 	"time"
 )
@@ -120,7 +119,7 @@ func (s *InMemoryStore) Revoke(id string) error {
 	}
 
 	if key.RevokedAt != nil {
-		return errors.New("key already revoked")
+		return ErrKeyAlreadyRevoked
 	}
 
 	now := time.Now().UTC()
