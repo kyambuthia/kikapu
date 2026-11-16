@@ -275,7 +275,7 @@ func (s *Service) buildOrderEvents(order *Order, cartID, paymentID string, commi
 			"currency":      order.Currency,
 			"commit_errors": commitErrCount,
 			"failed_at":     time.Now().UTC(),
-		}); err == nil  {
+		}); err == nil {
 			out = append(out, failedEvent)
 		}
 	} else {
@@ -285,7 +285,7 @@ func (s *Service) buildOrderEvents(order *Order, cartID, paymentID string, commi
 			"total":       order.Total,
 			"currency":    order.Currency,
 			"captured_at": time.Now().UTC(),
-		}); err == nil  {
+		}); err == nil {
 			out = append(out, paidEvent)
 		}
 	}

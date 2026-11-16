@@ -1,10 +1,10 @@
 package paystack
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha512"
 	"encoding/hex"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"

@@ -167,9 +167,9 @@ func (d *Deliverer) ProcessBatch(ctx context.Context) {
 		}
 
 		var (
-			matched    int
-			firstErr   error
-			retryable  bool
+			matched   int
+			firstErr  error
+			retryable bool
 		)
 		for _, sub := range subscribers {
 			if !sub.Active || !subMatchesEvent(sub.Types, record.Event.Type) {
