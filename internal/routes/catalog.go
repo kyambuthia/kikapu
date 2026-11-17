@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -192,62 +193,62 @@ func (h *CatalogHandler) listProducts(w http.ResponseWriter, r *http.Request) {
 	fields := parseFields(fieldsParam)
 	variantFields := parseVariantFields(fieldsParam)
 
-	if fieldsParam != "" {
-		validProductFields := map[string]bool{
-			"id": true, "slug": true, "name": true, "status": true,
-		}
-		validVariantFields := map[string]bool{
-			"id": true, "sku": true, "price": true, "currency": true,
-		}
-		for field := range fields {
-			baseField := field
-			if strings.HasPrefix(field, "variants.") {
-				baseField = strings.TrimPrefix(field, "variants.")
-			}
-			if !validProductFields[baseField] && !validVariantFields[baseField] {
-				httpx.WriteError(w, http.StatusBadRequest, "invalid_field", "unknown field: "+field, httpx.RequestID(r))
-				return
-			}
-		}
-	}
-
-	opts := catalog.ListOptions{
-		Limit:  limit,
-		Cursor: cursor,
-	}
-
-	products, nextCursor, err := h.Repo.List(ctx, opts)
-	if err != nil {
-		if errors.Is(err, catalog.ErrInvalidCursor) {
-			httpx.WriteError(w, http.StatusBadRequest, "invalid_cursor", "invalid cursor", httpx.RequestID(r))
-			return
-		}
-		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
+	if badField := validateSparseFields(fieldsParam, fields); badField != "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_field", "unknown field: "+badField, httpx.RequestID(r))
 		return
 	}
 
-	var filteredProducts []catalog.Product
-	if regionParam != "" || channelParam != "" {
-		filteredProducts = h.filterProductsByRegionChannel(ctx, products, regionParam, channelParam)
-	} else {
-		filteredProducts = products
-	}
-
-	data := make([]ProductResponse, 0, len(filteredProducts))
-	for _, p := range filteredProducts {
-		if p.Status != "published" {
-			continue
+	matched := make([]catalog.Product, 0, limit+1)
+	repoCursor := cursor
+	for len(matched) <= limit {
+		products, repoNext, err := h.Repo.List(ctx, catalog.ListOptions{
+			Limit:  catalog.MaxLimit,
+			Cursor: repoCursor,
+		})
+		if err != nil {
+			if errors.Is(err, catalog.ErrInvalidCursor) {
+				httpx.WriteError(w, http.StatusBadRequest, "invalid_cursor", "invalid cursor", httpx.RequestID(r))
+				return
+			}
+			httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
+			return
 		}
-		resp := applySparseFieldsetWithVariant(p, fields, variantFields)
-		data = append(data, resp)
+
+		published := make([]catalog.Product, 0, len(products))
+		for _, prod := range products {
+			if prod.Status == "published" {
+				published = append(published, prod)
+			}
+		}
+		if regionParam != "" || channelParam != "" {
+			published = h.filterProductsByRegionChannel(ctx, published, regionParam, channelParam)
+		}
+		matched = append(matched, published...)
+
+		if repoNext == "" {
+			break
+		}
+		repoCursor = repoNext
 	}
 
-	response := ProductListResponse{
+	var nextCursor string
+	if len(matched) > limit {
+		matched = matched[:limit]
+		lastID := matched[len(matched)-1].ID
+		if encoded, err := encodeCatalogCursor(lastID); err == nil {
+			nextCursor = encoded
+		}
+	}
+
+	data := make([]ProductResponse, 0, len(matched))
+	for _, prod := range matched {
+		data = append(data, applySparseFieldsetWithVariant(prod, fields, variantFields))
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, ProductListResponse{
 		Data:       data,
 		NextCursor: nextCursor,
-	}
-
-	httpx.WriteJSON(w, http.StatusOK, response)
+	})
 }
 
 func (h *CatalogHandler) getProduct(w http.ResponseWriter, r *http.Request) {
@@ -275,29 +276,13 @@ func (h *CatalogHandler) getProduct(w http.ResponseWriter, r *http.Request) {
 
 	regionParam := r.URL.Query().Get("region")
 	channelParam := r.URL.Query().Get("channel")
-	_ = regionParam
-	_ = channelParam
 	fieldsParam := r.URL.Query().Get("fields")
 	fields := parseFields(fieldsParam)
 	variantFields := parseVariantFields(fieldsParam)
 
-	if fieldsParam != "" {
-		validProductFields := map[string]bool{
-			"id": true, "slug": true, "name": true, "status": true,
-		}
-		validVariantFields := map[string]bool{
-			"id": true, "sku": true, "price": true, "currency": true,
-		}
-		for field := range fields {
-			baseField := field
-			if strings.HasPrefix(field, "variants.") {
-				baseField = strings.TrimPrefix(field, "variants.")
-			}
-			if !validProductFields[baseField] && !validVariantFields[baseField] {
-				httpx.WriteError(w, http.StatusBadRequest, "invalid_field", "unknown field: "+field, httpx.RequestID(r))
-				return
-			}
-		}
+	if badField := validateSparseFields(fieldsParam, fields); badField != "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_field", "unknown field: "+badField, httpx.RequestID(r))
+		return
 	}
 
 	product, err := h.Repo.Get(ctx, slug)
@@ -313,6 +298,12 @@ func (h *CatalogHandler) getProduct(w http.ResponseWriter, r *http.Request) {
 	if product.Status != "published" {
 		httpx.WriteError(w, http.StatusNotFound, "product_not_found", "product not found", httpx.RequestID(r))
 		return
+	}
+	if regionParam != "" || channelParam != "" {
+		if len(h.filterProductsByRegionChannel(ctx, []catalog.Product{*product}, regionParam, channelParam)) == 0 {
+			httpx.WriteError(w, http.StatusNotFound, "product_not_found", "product not found", httpx.RequestID(r))
+			return
+		}
 	}
 
 	resp := applySparseFieldsetWithVariant(*product, fields, variantFields)
@@ -387,4 +378,36 @@ func productMatchesCurrency(p catalog.Product, currency string) bool {
 		}
 	}
 	return false
+}
+
+func validateSparseFields(fieldsParam string, fields map[string]bool) string {
+	if fieldsParam == "" {
+		return ""
+	}
+	validProductFields := map[string]bool{
+		"id": true, "slug": true, "name": true, "status": true,
+	}
+	validVariantFields := map[string]bool{
+		"id": true, "sku": true, "price": true, "currency": true,
+	}
+	for field := range fields {
+		if strings.HasPrefix(field, "variants.") {
+			if !validVariantFields[strings.TrimPrefix(field, "variants.")] {
+				return field
+			}
+		} else if !validProductFields[field] {
+			return field
+		}
+	}
+	return ""
+}
+
+func encodeCatalogCursor(lastID string) (string, error) {
+	b, err := json.Marshal(struct {
+		LastID string `json:"last_id"`
+	}{LastID: lastID})
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(b), nil
 }
