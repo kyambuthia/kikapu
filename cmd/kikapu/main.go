@@ -548,6 +548,10 @@ func buildAPIMux(deps apiDeps) *http.ServeMux {
 		})
 	})
 
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found", httpx.RequestID(r))
+	})
+
 	return mux
 }
 

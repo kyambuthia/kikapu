@@ -10,6 +10,7 @@ import (
 	"github.com/kyambuthia/kikapu/internal/catalog"
 	"github.com/kyambuthia/kikapu/internal/checkout"
 	"github.com/kyambuthia/kikapu/internal/inventory"
+	"github.com/kyambuthia/kikapu/internal/payment"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 	"github.com/kyambuthia/kikapu/internal/platform/money"
 )
@@ -327,6 +328,14 @@ func (h *CartHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, inventory.ErrInsufficientStock) {
 			httpx.WriteError(w, http.StatusConflict, "insufficient_stock", err.Error(), httpx.RequestID(r))
+			return
+		}
+		if errors.Is(err, payment.ErrChargeFailed) {
+			httpx.WriteError(w, http.StatusPaymentRequired, "payment_failed", err.Error(), httpx.RequestID(r))
+			return
+		}
+		if errors.Is(err, payment.ErrTimeout) {
+			httpx.WriteError(w, http.StatusGatewayTimeout, "payment_timeout", err.Error(), httpx.RequestID(r))
 			return
 		}
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to place order", httpx.RequestID(r))

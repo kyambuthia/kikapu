@@ -202,6 +202,11 @@ func (r *MemoryProductRepository) Update(ctx context.Context, id string, input P
 	product.Status = input.Status
 	product.UpdatedAt = now
 
+	existingIDs := make(map[string]string, len(product.Variants))
+	for _, existingVar := range product.Variants {
+		existingIDs[existingVar.SKU] = existingVar.ID
+	}
+
 	skus := make(map[string]bool)
 	product.Variants = make([]Variant, 0, len(input.Variants))
 	for _, v := range input.Variants {
@@ -213,8 +218,12 @@ func (r *MemoryProductRepository) Update(ctx context.Context, id string, input P
 		}
 		skus[v.SKU] = true
 
+		varID := existingIDs[v.SKU]
+		if varID == "" {
+			varID = r.keyGen()
+		}
 		variant := Variant{
-			ID:        r.keyGen(),
+			ID:        varID,
 			ProductID: product.ID,
 			SKU:       v.SKU,
 			Price:     money.NewAmount(v.Price, v.Currency),

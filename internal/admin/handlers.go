@@ -254,7 +254,7 @@ func (h *Handler) createProduct(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var input ProductInput
-	if err := httpx.ReadJSON(r, &input); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &input); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
@@ -286,20 +286,63 @@ func (h *Handler) createProduct(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, product)
 }
 
+type patchProductInput struct {
+	Slug     *string         `json:"slug"`
+	Name     *string         `json:"name"`
+	Status   *ProductStatus  `json:"status"`
+	Variants *[]VariantInput `json:"variants"`
+}
+
 func (h *Handler) updateProduct(w http.ResponseWriter, r *http.Request, id string) {
-	var input ProductInput
-	if err := httpx.ReadJSON(r, &input); err != nil {
+	var patch patchProductInput
+	if err := httpx.DecodeStrictJSON(r, &patch); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
 
-	validationErr := ValidateProductInput(input)
-	if validationErr != nil {
+	ctx := r.Context()
+	existing, err := h.productRepo.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, ErrProductNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "product_not_found", "product not found", httpx.RequestID(r))
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
+		return
+	}
+
+	input := ProductInput{
+		Slug:   existing.Slug,
+		Name:   existing.Name,
+		Status: existing.Status,
+	}
+	if patch.Slug != nil {
+		input.Slug = *patch.Slug
+	}
+	if patch.Name != nil {
+		input.Name = *patch.Name
+	}
+	if patch.Status != nil {
+		input.Status = *patch.Status
+	}
+	if patch.Variants != nil {
+		input.Variants = *patch.Variants
+	} else {
+		input.Variants = make([]VariantInput, 0, len(existing.Variants))
+		for _, v := range existing.Variants {
+			input.Variants = append(input.Variants, VariantInput{
+				SKU:      v.SKU,
+				Price:    v.Price.Value,
+				Currency: v.Price.Currency,
+			})
+		}
+	}
+
+	if validationErr := ValidateProductInput(input); validationErr != nil {
 		h.writeValidationError(w, r, validationErr)
 		return
 	}
 
-	ctx := r.Context()
 	product, err := h.productRepo.Update(ctx, id, input)
 	if err != nil {
 		if errors.Is(err, ErrProductNotFound) {
@@ -353,7 +396,7 @@ func (h *Handler) updateStock(w http.ResponseWriter, r *http.Request, variantID 
 		OnHand     int    `json:"on_hand"`
 	}
 
-	if err := httpx.ReadJSON(r, &input); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &input); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
@@ -506,7 +549,7 @@ func (h *Handler) createFulfillment(w http.ResponseWriter, r *http.Request, orde
 		Items []fulfillment.Item `json:"items"`
 	}
 
-	if err := httpx.ReadJSON(r, &input); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &input); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
@@ -569,7 +612,7 @@ func (h *Handler) updateFulfillmentStatus(w http.ResponseWriter, r *http.Request
 		Status string `json:"status"`
 	}
 
-	if err := httpx.ReadJSON(r, &input); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &input); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
@@ -615,7 +658,7 @@ func (h *Handler) addTracking(w http.ResponseWriter, r *http.Request, fulfillmen
 		URL     string `json:"url"`
 	}
 
-	if err := httpx.ReadJSON(r, &input); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &input); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body", httpx.RequestID(r))
 		return
 	}
