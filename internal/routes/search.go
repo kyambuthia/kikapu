@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -9,11 +10,15 @@ import (
 	"github.com/kyambuthia/kikapu/internal/search"
 )
 
-type SearchHandler struct {
-	SearchStore *search.PostgresStore
+type SearchStore interface {
+	Query(ctx context.Context, q string, filters search.Filters, page search.Page) (*search.Results, error)
 }
 
-func NewSearchHandler(store *search.PostgresStore) *SearchHandler {
+type SearchHandler struct {
+	SearchStore SearchStore
+}
+
+func NewSearchHandler(store SearchStore) *SearchHandler {
 	return &SearchHandler{SearchStore: store}
 }
 
@@ -50,10 +55,9 @@ func (h *SearchHandler) search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cursor := r.URL.Query().Get("cursor")
-	statusFilter := r.URL.Query().Get("status")
-
+	// Public search only exposes published products regardless of query params.
 	filters := search.Filters{
-		Status: statusFilter,
+		Status: "published",
 	}
 
 	page := search.Page{

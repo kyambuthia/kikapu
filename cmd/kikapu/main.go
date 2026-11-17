@@ -119,7 +119,7 @@ func main() {
 		adminStock      admin.StockRepository
 		adminOrderStore admin.OrderLister
 		fulfillmentSvc  *fulfillment.Service
-		searchStore     *search.PostgresStore
+		searchStore     routes.SearchStore
 		authStore       interface {
 			auth.KeyStore
 			Seed(name, rawKey string, scopes []string) (*auth.Key, error)
@@ -194,6 +194,7 @@ func main() {
 		}
 
 		repo = catalog.NewInMemoryRepository(products)
+		searchStore = search.NewInMemoryStore(repo)
 		logger.Info("DATABASE_URL not set, using in-memory repositories")
 	}
 
@@ -439,7 +440,7 @@ type apiDeps struct {
 	adminStock      admin.StockRepository
 	adminOrderStore admin.OrderLister
 	fulfillmentSvc  *fulfillment.Service
-	searchStore     *search.PostgresStore
+	searchStore     routes.SearchStore
 	authStore       auth.KeyStore
 	paystackWebhook http.Handler
 	mpesaCallback   http.Handler
