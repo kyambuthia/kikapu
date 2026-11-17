@@ -126,6 +126,12 @@ type TransactionalOrderStore interface {
 	SaveOrderWithEvents(ctx context.Context, key string, order *Order, ob events.Outbox, evs ...events.Event) error
 }
 
+// TransactionalOrderWithLinesStore persists the checkout order, canonical orders/order_lines
+// rows, and outbox events in one atomic transaction.
+type TransactionalOrderWithLinesStore interface {
+	SaveOrderWithEventsAndLines(ctx context.Context, key string, order *Order, lines []cart.Line, ob events.Outbox, evs ...events.Event) error
+}
+
 // OrderSyncHook is invoked after a new order is persisted so downstream
 // read models (admin order lister, fulfillment) stay in sync.
 type OrderSyncHook func(ctx context.Context, order *Order, lines []cart.Line)
@@ -243,7 +249,7 @@ func (s *Service) PlaceOrderContext(ctx context.Context, cartID, idempotencyKey 
 
 	now := time.Now().UTC()
 	order := &Order{
-		ID:           "ord_" + uuid.NewString(),
+		ID:           uuid.NewString(),
 		CartID:       cartID,
 		Status:       orderStatus,
 		Total:        total.Value,
@@ -256,7 +262,11 @@ func (s *Service) PlaceOrderContext(ctx context.Context, cartID, idempotencyKey 
 
 	pendingEvents := s.buildOrderEvents(order, cartID, chargeResult.ID, len(commitErrors))
 
-	if txStore, ok := s.idempotency.(TransactionalOrderStore); ok && s.outbox != nil {
+	if txLinesStore, ok := s.idempotency.(TransactionalOrderWithLinesStore); ok {
+		if err := txLinesStore.SaveOrderWithEventsAndLines(ctx, idempotencyKey, order, c.Lines, s.outbox, pendingEvents...); err != nil {
+			return nil, err
+		}
+	} else if txStore, ok := s.idempotency.(TransactionalOrderStore); ok && s.outbox != nil {
 		if err := txStore.SaveOrderWithEvents(ctx, idempotencyKey, order, s.outbox, pendingEvents...); err != nil {
 			return nil, err
 		}

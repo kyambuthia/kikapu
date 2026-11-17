@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/kyambuthia/kikapu/internal/cart"
 	"github.com/kyambuthia/kikapu/internal/events"
 	"github.com/kyambuthia/kikapu/internal/payment"
 )
@@ -48,6 +50,10 @@ func (s *PostgresOrderStore) SaveOrder(key string, order *Order) error {
 // within a single database transaction. If the idempotency key already exists,
 // no duplicate outbox events are emitted and order is populated with the stored row.
 func (s *PostgresOrderStore) SaveOrderWithEvents(ctx context.Context, key string, order *Order, ob events.Outbox, evs ...events.Event) error {
+	return s.SaveOrderWithEventsAndLines(ctx, key, order, nil, ob, evs...)
+}
+
+func (s *PostgresOrderStore) SaveOrderWithEventsAndLines(ctx context.Context, key string, order *Order, lines []cart.Line, ob events.Outbox, evs ...events.Event) error {
 	resJSON, err := json.Marshal(order.Reservations)
 	if err != nil {
 		return fmt.Errorf("checkout: marshal reservations: %w", err)
@@ -75,10 +81,36 @@ func (s *PostgresOrderStore) SaveOrderWithEvents(ctx context.Context, key string
 		return fmt.Errorf("checkout: rows affected: %w", err)
 	}
 
-	if inserted > 0 && ob != nil {
-		for i := range evs {
-			if err := ob.Append(ctx, tx, evs[i]); err != nil {
-				return fmt.Errorf("checkout: append outbox event: %w", err)
+	if inserted > 0 {
+		if _, err := uuid.Parse(order.ID); err == nil {
+			ordStatus := "confirmed"
+			payStatus := "captured"
+			if order.Status == OrderStatusFailed {
+				ordStatus = "cancelled"
+				payStatus = "pending"
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO orders (id, number, region_id, status, payment_status, fulfillment_status, subtotal, discount, tax, grand_total, currency, created_at, updated_at)
+				VALUES ($1, $2, 'default', $3, $4, 'unfulfilled', $5, 0, 0, $5, $6, $7, $8)
+				ON CONFLICT (id) DO NOTHING
+			`, order.ID, order.ID, ordStatus, payStatus, order.Total, order.Currency, order.CreatedAt, order.UpdatedAt); err != nil {
+				return fmt.Errorf("checkout: insert canonical order: %w", err)
+			}
+			for _, line := range lines {
+				if _, err := tx.ExecContext(ctx, `
+					INSERT INTO order_lines (order_id, variant_id, sku, quantity, unit_price, discount, tax, currency, created_at)
+					VALUES ($1, $2, $3, $4, $5, 0, 0, $6, $7)
+				`, order.ID, line.VariantID, line.VariantID, line.Quantity, line.UnitPrice.Value, line.UnitPrice.Currency, order.CreatedAt); err != nil {
+					return fmt.Errorf("checkout: insert order line: %w", err)
+				}
+			}
+		}
+
+		if ob != nil {
+			for i := range evs {
+				if err := ob.Append(ctx, tx, evs[i]); err != nil {
+					return fmt.Errorf("checkout: append outbox event: %w", err)
+				}
 			}
 		}
 	}

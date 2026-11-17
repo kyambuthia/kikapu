@@ -235,8 +235,11 @@ func TestPostgresStore_ConcurrentSameKeyExactlyOneExecutes(t *testing.T) {
 	}
 	defer db.Close()
 
-	store := NewPostgresStore(db)
 	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, "TRUNCATE idempotency_records"); err != nil {
+		t.Fatalf("Failed to truncate idempotency_records: %v", err)
+	}
+	store := NewPostgresStore(db)
 
 	key := "test-concurrent-key"
 	requestHash := "POST:/v1/checkout:{\"cart_id\":\"123\"}"

@@ -360,6 +360,22 @@ func main() {
 	var httpIdempotencyStore idempotency.Store
 	if db != nil {
 		httpIdempotencyStore = idempotency.NewPostgresStore(db)
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			ticker := time.NewTicker(15 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-ticker.C:
+					if err := httpIdempotencyStore.Cleanup(workerCtx); err != nil {
+						logger.Warn("idempotency cleanup failed", "error", err)
+					}
+				}
+			}
+		}()
 	}
 
 	mux := buildAPIMux(apiDeps{
@@ -630,6 +646,10 @@ func openPostgres(databaseURL string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(30 * time.Minute)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
