@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -193,7 +195,34 @@ func main() {
 			os.Exit(1)
 		}
 
-		repo = catalog.NewInMemoryRepository(products)
+		if memAdmin, ok := adminProducts.(*admin.MemoryProductRepository); ok {
+			now := time.Now().UTC()
+			for _, p := range products {
+				variants := make([]admin.Variant, 0, len(p.Variants))
+				for _, v := range p.Variants {
+					variants = append(variants, admin.Variant{
+						ID:        v.ID,
+						ProductID: p.ID,
+						SKU:       v.SKU,
+						Price:     v.Price,
+						CreatedAt: now,
+						UpdatedAt: now,
+					})
+				}
+				memAdmin.SeedProduct(admin.Product{
+					ID:        p.ID,
+					Slug:      p.Slug,
+					Name:      p.Name,
+					Status:    admin.ProductStatus(p.Status),
+					Variants:  variants,
+					CreatedAt: now,
+					UpdatedAt: now,
+				})
+			}
+			repo = &adminCatalogAdapter{adminRepo: memAdmin}
+		} else {
+			repo = catalog.NewInMemoryRepository(products)
+		}
 		searchStore = search.NewInMemoryStore(repo)
 		logger.Info("DATABASE_URL not set, using in-memory repositories")
 	}
@@ -706,4 +735,94 @@ func (f *memoryOrderFetcher) Get(_ context.Context, id string) (*fulfillment.Ord
 		return nil, sql.ErrNoRows
 	}
 	return info, nil
+}
+
+// adminCatalogAdapter exposes admin.ProductRepository as a catalog.Repository
+// so in-memory admin mutations are immediately visible to /v1/products, /v1/search, and cart pricing.
+type adminCatalogAdapter struct {
+	adminRepo *admin.MemoryProductRepository
+}
+
+func (a *adminCatalogAdapter) Get(ctx interface{}, slug string) (*catalog.Product, error) {
+	c, _ := ctx.(context.Context)
+	if c == nil {
+		c = context.Background()
+	}
+	p, err := a.adminRepo.GetBySlug(c, slug)
+	if err != nil {
+		if err == admin.ErrProductNotFound {
+			return nil, catalog.ErrProductNotFound
+		}
+		return nil, err
+	}
+	cp := toCatalogProduct(*p)
+	return &cp, nil
+}
+
+func (a *adminCatalogAdapter) List(ctx interface{}, opts catalog.ListOptions) ([]catalog.Product, string, error) {
+	c, _ := ctx.(context.Context)
+	if c == nil {
+		c = context.Background()
+	}
+	var adminCursor string
+	if opts.Cursor != "" {
+		raw, err := base64.StdEncoding.DecodeString(opts.Cursor)
+		if err != nil {
+			return nil, "", catalog.ErrInvalidCursor
+		}
+		var cur struct {
+			LastID string `json:"last_id"`
+		}
+		if err := json.Unmarshal(raw, &cur); err != nil {
+			return nil, "", catalog.ErrInvalidCursor
+		}
+		adminCursor = cur.LastID
+	}
+
+	prods, nextID, err := a.adminRepo.List(c, admin.ProductListOptions{
+		Limit:  opts.Limit,
+		Cursor: adminCursor,
+	})
+	if err != nil {
+		if err == admin.ErrInvalidLimit {
+			return nil, "", catalog.ErrInvalidLimit
+		}
+		if err == admin.ErrInvalidCursor {
+			return nil, "", catalog.ErrInvalidCursor
+		}
+		return nil, "", err
+	}
+
+	out := make([]catalog.Product, 0, len(prods))
+	for _, p := range prods {
+		out = append(out, toCatalogProduct(p))
+	}
+
+	var nextCursor string
+	if nextID != "" {
+		b, _ := json.Marshal(struct {
+			LastID string `json:"last_id"`
+		}{LastID: nextID})
+		nextCursor = base64.StdEncoding.EncodeToString(b)
+	}
+	return out, nextCursor, nil
+}
+
+func toCatalogProduct(p admin.Product) catalog.Product {
+	variants := make([]catalog.Variant, 0, len(p.Variants))
+	for _, v := range p.Variants {
+		variants = append(variants, catalog.Variant{
+			ID:       v.ID,
+			SKU:      v.SKU,
+			Price:    v.Price,
+			Currency: v.Price.Currency,
+		})
+	}
+	return catalog.Product{
+		ID:       p.ID,
+		Slug:     p.Slug,
+		Name:     p.Name,
+		Status:   string(p.Status),
+		Variants: variants,
+	}
 }

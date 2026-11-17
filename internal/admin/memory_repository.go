@@ -451,3 +451,23 @@ func (l *MemoryOrderLister) Save(o Order) {
 	defer l.mu.Unlock()
 	l.orders[o.ID] = o
 }
+
+// SeedProduct inserts a pre-built product (preserving IDs) for local in-memory startup.
+func (r *MemoryProductRepository) SeedProduct(prod Product) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := prod
+	cp.Variants = append([]Variant(nil), prod.Variants...)
+	r.products[cp.ID] = &cp
+	r.bySlug[cp.Slug] = &cp
+}
+
+func (l *MemoryOrderLister) MarkFulfilled(id string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if o, ok := l.orders[id]; ok {
+		o.FulfillmentStatus = "fulfilled"
+		o.UpdatedAt = time.Now().UTC()
+		l.orders[id] = o
+	}
+}

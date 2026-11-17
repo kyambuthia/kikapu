@@ -426,6 +426,17 @@ func (h *Handler) updateStock(w http.ResponseWriter, r *http.Request, variantID 
 	}
 
 	ctx := r.Context()
+	if h.productRepo != nil {
+		exists, err := h.variantExists(ctx, variantID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
+			return
+		}
+		if !exists {
+			httpx.WriteError(w, http.StatusNotFound, "variant_not_found", "variant not found", httpx.RequestID(r))
+			return
+		}
+	}
 
 	currentLevel, err := h.stockRepo.GetLevel(ctx, variantID, input.LocationID)
 	if err != nil {
@@ -689,6 +700,12 @@ func (h *Handler) updateFulfillmentStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if status == fulfillment.StatusDelivered {
+		if marker, ok := h.orderStore.(interface{ MarkFulfilled(string) }); ok {
+			marker.MarkFulfilled(f.OrderID)
+		}
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, f)
 }
 
@@ -736,4 +753,28 @@ func (h *Handler) addTracking(w http.ResponseWriter, r *http.Request, fulfillmen
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, f)
+}
+
+func (h *Handler) variantExists(ctx context.Context, variantID string) (bool, error) {
+	var cursor string
+	for {
+		products, next, err := h.productRepo.List(ctx, ProductListOptions{
+			Limit:  MaxLimit,
+			Cursor: cursor,
+		})
+		if err != nil {
+			return false, err
+		}
+		for _, p := range products {
+			for _, v := range p.Variants {
+				if v.ID == variantID {
+					return true, nil
+				}
+			}
+		}
+		if next == "" {
+			return false, nil
+		}
+		cursor = next
+	}
 }
