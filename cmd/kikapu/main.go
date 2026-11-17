@@ -267,6 +267,28 @@ func main() {
 		defer workerWG.Done()
 		deliverer.Run(workerCtx, 5*time.Second)
 	}()
+	if expirer, ok := inventoryStore.(interface {
+		ExpireDue(context.Context) (int, error)
+	}); ok {
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			ticker := time.NewTicker(1 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-ticker.C:
+					if n, err := expirer.ExpireDue(workerCtx); err != nil {
+						logger.Warn("inventory expiration sweep failed", "error", err)
+					} else if n > 0 {
+						logger.Info("expired inventory reservations released", "count", n)
+					}
+				}
+			}
+		}()
+	}
 
 	var paystackStore paystack.EventStore = paystack.NewInMemoryEventStore()
 	var mpesaStore mpesa.CallbackStore = mpesa.NewInMemoryCallbackStore()
