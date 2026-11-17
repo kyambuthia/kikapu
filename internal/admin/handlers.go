@@ -3,22 +3,31 @@ package admin
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kyambuthia/kikapu/internal/fulfillment"
 	"github.com/kyambuthia/kikapu/internal/platform/httpx"
 )
 
+type fulfillmentIdemEntry struct {
+	fingerprint string
+	fulfillment *fulfillment.Fulfillment
+}
+
 type Handler struct {
 	productRepo    ProductRepository
 	stockRepo      StockRepository
 	orderStore     OrderLister
 	fulfillmentSvc *fulfillment.Service
+	fulIdemMu      sync.Mutex
+	fulIdem        map[string]fulfillmentIdemEntry
 }
 
 type OrderLister interface {
@@ -48,6 +57,7 @@ func NewHandler(productRepo ProductRepository, stockRepo StockRepository) *Handl
 	return &Handler{
 		productRepo: productRepo,
 		stockRepo:   stockRepo,
+		fulIdem:     make(map[string]fulfillmentIdemEntry),
 	}
 }
 
@@ -558,6 +568,30 @@ func (h *Handler) createFulfillment(w http.ResponseWriter, r *http.Request, orde
 		httpx.WriteError(w, http.StatusBadRequest, "validation_error", "items cannot be empty", httpx.RequestID(r))
 		return
 	}
+	for _, item := range input.Items {
+		if item.VariantID == "" || item.Quantity <= 0 {
+			httpx.WriteError(w, http.StatusBadRequest, "validation_error", "each item must have a variant_id and quantity > 0", httpx.RequestID(r))
+			return
+		}
+	}
+
+	fpBytes, _ := json.Marshal(input.Items)
+	fingerprint := orderID + ":" + string(fpBytes)
+
+	h.fulIdemMu.Lock()
+	if h.fulIdem == nil {
+		h.fulIdem = make(map[string]fulfillmentIdemEntry)
+	}
+	if existing, ok := h.fulIdem[idempotencyKey]; ok {
+		h.fulIdemMu.Unlock()
+		if existing.fingerprint != fingerprint {
+			httpx.WriteError(w, http.StatusConflict, "idempotency_conflict", "idempotency key reused with a different request", httpx.RequestID(r))
+			return
+		}
+		httpx.WriteJSON(w, http.StatusCreated, existing.fulfillment)
+		return
+	}
+	h.fulIdemMu.Unlock()
 
 	ctx := r.Context()
 	f, err := h.fulfillmentSvc.CreateFulfillment(ctx, orderID, input.Items)
@@ -577,6 +611,13 @@ func (h *Handler) createFulfillment(w http.ResponseWriter, r *http.Request, orde
 		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error", httpx.RequestID(r))
 		return
 	}
+
+	h.fulIdemMu.Lock()
+	h.fulIdem[idempotencyKey] = fulfillmentIdemEntry{
+		fingerprint: fingerprint,
+		fulfillment: f,
+	}
+	h.fulIdemMu.Unlock()
 
 	httpx.WriteJSON(w, http.StatusCreated, f)
 }

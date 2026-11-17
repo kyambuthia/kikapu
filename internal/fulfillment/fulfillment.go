@@ -29,24 +29,24 @@ const (
 )
 
 type Item struct {
-	VariantID string
-	Quantity  int
+	VariantID string `json:"variant_id"`
+	Quantity  int    `json:"quantity"`
 }
 
 type Tracking struct {
-	Carrier string
-	Number  string
-	URL     string
+	Carrier string `json:"carrier"`
+	Number  string `json:"number"`
+	URL     string `json:"url"`
 }
 
 type Fulfillment struct {
-	ID        string
-	OrderID   string
-	Status    Status
-	Items     []Item
-	Tracking  *Tracking
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID        string    `json:"id"`
+	OrderID   string    `json:"order_id"`
+	Status    Status    `json:"status"`
+	Items     []Item    `json:"items"`
+	Tracking  *Tracking `json:"tracking,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (f *Fulfillment) Transition(to Status) error {
