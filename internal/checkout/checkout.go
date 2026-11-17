@@ -31,15 +31,15 @@ const (
 )
 
 type Order struct {
-	ID           string
-	CartID       string
-	Status       OrderStatus
-	Total        int64
-	Currency     string
-	PaymentID    string
-	Reservations []string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID           string      `json:"id"`
+	CartID       string      `json:"cart_id"`
+	Status       OrderStatus `json:"status"`
+	Total        int64       `json:"total"`
+	Currency     string      `json:"currency"`
+	PaymentID    string      `json:"-"`
+	Reservations []string    `json:"-"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
 }
 
 type IdempotencyStore struct {
@@ -138,6 +138,8 @@ type Service struct {
 	outbox          events.Outbox
 	reservationTTL  time.Duration
 	onOrderCreated  OrderSyncHook
+	cartLocksMu     sync.Mutex
+	cartLocks       map[string]*sync.Mutex
 }
 
 func (s *Service) SetOrderSyncHook(hook OrderSyncHook) {
@@ -172,6 +174,19 @@ func (s *Service) PlaceOrderContext(ctx context.Context, cartID, idempotencyKey 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+
+	if existingOrder, ok := s.idempotency.GetOrderForKey(idempotencyKey); ok {
+		if existingOrder.CartID != cartID {
+			return nil, ErrIdempotencyConflict
+		}
+		return existingOrder, nil
+	}
+
+	// Serialize concurrent checkouts on the same cartID so two different
+	// idempotency keys cannot both charge and create duplicate orders.
+	cartMu := s.lockCart(cartID)
+	cartMu.Lock()
+	defer cartMu.Unlock()
 
 	if existingOrder, ok := s.idempotency.GetOrderForKey(idempotencyKey); ok {
 		if existingOrder.CartID != cartID {
@@ -353,4 +368,18 @@ func mapPaymentStateToOrderStatus(state payment.State) OrderStatus {
 	default:
 		return ""
 	}
+}
+
+func (s *Service) lockCart(cartID string) *sync.Mutex {
+	s.cartLocksMu.Lock()
+	defer s.cartLocksMu.Unlock()
+	if s.cartLocks == nil {
+		s.cartLocks = make(map[string]*sync.Mutex)
+	}
+	mu, ok := s.cartLocks[cartID]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.cartLocks[cartID] = mu
+	}
+	return mu
 }
