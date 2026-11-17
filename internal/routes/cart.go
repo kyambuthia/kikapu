@@ -62,6 +62,7 @@ func (h *CartHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/carts/{id}/items/{variantID}", h.UpdateItem)
 	mux.HandleFunc("DELETE /v1/carts/{id}/items/{variantID}", h.RemoveItem)
 	mux.HandleFunc("POST /v1/checkout", h.Checkout)
+	mux.HandleFunc("GET /v1/orders/{id}", h.GetOrder)
 }
 
 func (h *CartHandler) CreateCart(w http.ResponseWriter, r *http.Request) {
@@ -348,4 +349,24 @@ func isValidCurrency(code string) bool {
 		}
 	}
 	return true
+}
+
+func (h *CartHandler) GetOrder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "order id is required", httpx.RequestID(r))
+		return
+	}
+
+	o, err := h.checkout.GetOrder(id)
+	if err != nil {
+		if errors.Is(err, checkout.ErrOrderNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "order_not_found", "order not found", httpx.RequestID(r))
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get order", httpx.RequestID(r))
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, o)
 }

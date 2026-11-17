@@ -110,6 +110,8 @@ func main() {
 
 	var (
 		db              *sql.DB
+		memOrderLister  *admin.MemoryOrderLister
+		memOrderFetcher *memoryOrderFetcher
 		eventOutbox     events.Outbox
 		repo            catalog.Repository
 		cartStore       cart.Store
@@ -151,7 +153,10 @@ func main() {
 		cartStore = cart.NewInMemoryStore()
 		adminProducts = admin.NewMemoryProductRepository()
 		adminStock = admin.NewMemoryStockRepository()
-		adminOrderStore = admin.NewMemoryOrderLister()
+		memOrderLister = admin.NewMemoryOrderLister()
+		adminOrderStore = memOrderLister
+		memOrderFetcher = newMemoryOrderFetcher()
+		fulfillmentSvc = fulfillment.NewService(fulfillment.NewInMemoryRepository(), memOrderFetcher)
 		authStore = auth.NewInMemoryStore()
 	}
 
@@ -226,6 +231,33 @@ func main() {
 	}
 
 	checkoutSvc := checkout.NewService(cartStore, inventoryStore, paymentProvider, idempotencyStore, eventOutbox)
+	if memOrderLister != nil && memOrderFetcher != nil {
+		checkoutSvc.SetOrderSyncHook(func(_ context.Context, o *checkout.Order, lines []cart.Line) {
+			status := "confirmed"
+			payStatus := "captured"
+			if o.Status == checkout.OrderStatusFailed {
+				status = "cancelled"
+				payStatus = "pending"
+			}
+			memOrderLister.Save(admin.Order{
+				ID:                o.ID,
+				Number:            o.ID,
+				Status:            status,
+				PaymentStatus:     payStatus,
+				FulfillmentStatus: "unfulfilled",
+				CreatedAt:         o.CreatedAt,
+				UpdatedAt:         o.UpdatedAt,
+			})
+			fLines := make([]fulfillment.OrderLine, 0, len(lines))
+			for _, l := range lines {
+				fLines = append(fLines, fulfillment.OrderLine{
+					VariantID: l.VariantID,
+					Quantity:  l.Quantity,
+				})
+			}
+			memOrderFetcher.Save(o.ID, status, fLines)
+		})
+	}
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	var workerWG sync.WaitGroup
@@ -622,4 +654,33 @@ func defaultChannels() []channel.SalesChannel {
 			Regions: []string{"ke", "us"},
 		},
 	}
+}
+
+type memoryOrderFetcher struct {
+	mu     sync.RWMutex
+	orders map[string]*fulfillment.OrderInfo
+}
+
+func newMemoryOrderFetcher() *memoryOrderFetcher {
+	return &memoryOrderFetcher{orders: make(map[string]*fulfillment.OrderInfo)}
+}
+
+func (f *memoryOrderFetcher) Save(id, status string, lines []fulfillment.OrderLine) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.orders[id] = &fulfillment.OrderInfo{
+		ID:     id,
+		Status: status,
+		Lines:  append([]fulfillment.OrderLine(nil), lines...),
+	}
+}
+
+func (f *memoryOrderFetcher) Get(_ context.Context, id string) (*fulfillment.OrderInfo, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	info, ok := f.orders[id]
+	if !ok {
+		return nil, sql.ErrNoRows
+	}
+	return info, nil
 }

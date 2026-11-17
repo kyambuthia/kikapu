@@ -126,6 +126,10 @@ type TransactionalOrderStore interface {
 	SaveOrderWithEvents(ctx context.Context, key string, order *Order, ob events.Outbox, evs ...events.Event) error
 }
 
+// OrderSyncHook is invoked after a new order is persisted so downstream
+// read models (admin order lister, fulfillment) stay in sync.
+type OrderSyncHook func(ctx context.Context, order *Order, lines []cart.Line)
+
 type Service struct {
 	cartStore       cart.Store
 	inventoryStore  inventory.Store
@@ -133,6 +137,11 @@ type Service struct {
 	idempotency     OrderStore
 	outbox          events.Outbox
 	reservationTTL  time.Duration
+	onOrderCreated  OrderSyncHook
+}
+
+func (s *Service) SetOrderSyncHook(hook OrderSyncHook) {
+	s.onOrderCreated = hook
 }
 
 func NewService(
@@ -245,6 +254,11 @@ func (s *Service) PlaceOrderContext(ctx context.Context, cartID, idempotencyKey 
 				_ = s.outbox.Append(ctx, nil, pendingEvents[i])
 			}
 		}
+	}
+
+	linesCopy := append([]cart.Line(nil), c.Lines...)
+	if s.onOrderCreated != nil {
+		s.onOrderCreated(ctx, order, linesCopy)
 	}
 
 	c.Clear()

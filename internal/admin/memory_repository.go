@@ -420,3 +420,9 @@ func (l *MemoryOrderLister) Get(ctx context.Context, id string) (*Order, error) 
 	}
 	return &o, nil
 }
+
+func (l *MemoryOrderLister) Save(o Order) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.orders[o.ID] = o
+}
