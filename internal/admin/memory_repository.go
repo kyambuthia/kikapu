@@ -45,7 +45,7 @@ func (r *MemoryProductRepository) Create(ctx context.Context, input ProductInput
 
 	if record, ok := r.idempotency[idempotencyKey]; ok {
 		var product Product
-		if err := product.unmarshalJSON(record.response); err == nil {
+		if err := json.Unmarshal(record.response, &product); err == nil {
 			return &product, nil
 		}
 	}
@@ -153,6 +153,10 @@ func (r *MemoryProductRepository) List(ctx context.Context, opts ProductListOpti
 		return []Product{}, "", nil
 	}
 
+	sort.Slice(products, func(i, j int) bool {
+		return products[i].ID < products[j].ID
+	})
+
 	startIdx := 0
 	if opts.Cursor != "" {
 		for i, p := range products {
@@ -187,15 +191,27 @@ func (r *MemoryProductRepository) Update(ctx context.Context, id string, input P
 		return nil, ErrProductNotFound
 	}
 
-	delete(r.bySlug, product.Slug)
-
-	if _, exists := r.bySlug[input.Slug]; exists && input.Slug != product.Slug {
-		return nil, &ValidationError{
-			Message: "product with this slug already exists",
-			Fields:  map[string]string{"slug": "product with this slug already exists"},
+	if input.Slug != product.Slug {
+		if _, exists := r.bySlug[input.Slug]; exists {
+			return nil, &ValidationError{
+				Message: "product with this slug already exists",
+				Fields:  map[string]string{"slug": "product with this slug already exists"},
+			}
 		}
 	}
 
+	skuCheck := make(map[string]bool, len(input.Variants))
+	for _, v := range input.Variants {
+		if skuCheck[v.SKU] {
+			return nil, &ValidationError{
+				Message: "duplicate SKU",
+				Fields:  map[string]string{"variants": "duplicate SKU"},
+			}
+		}
+		skuCheck[v.SKU] = true
+	}
+
+	delete(r.bySlug, product.Slug)
 	now := time.Now()
 	product.Slug = input.Slug
 	product.Name = input.Name
@@ -243,7 +259,7 @@ func (r *MemoryProductRepository) Delete(ctx context.Context, id string) error {
 	defer r.mu.Unlock()
 
 	product, ok := r.products[id]
-	if !ok {
+	if !ok || product.Status == StatusArchived {
 		return ErrProductNotFound
 	}
 
